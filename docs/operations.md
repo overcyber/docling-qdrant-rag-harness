@@ -122,6 +122,20 @@ Docker containers cannot access the host GPU unless:
 2. The Docker daemon is configured with the `nvidia` runtime (`nvidia-ctk runtime configure --runtime=docker`).
 3. The Docker Compose file explicitly reserves GPU devices for the services.
 
+### Comparison: Upstream Docling Docker vs Our GPU Harness
+
+| Feature | Upstream Docling Docker (`docling-project/docling`) | Our GPU Harness (`services/parser`) |
+|---|---|---|
+| **PyTorch Wheel** | Forced CPU-only (`--extra-index-url https://download.pytorch.org/whl/cpu`) | Full CUDA 13 / cu130 PyTorch (`torch 2.14.0+cu130`) |
+| **GPU Acceleration** | Disabled (fails to access CUDA drivers) | Enabled on NVIDIA GPUs (RTX 5060, etc.) via CDI |
+| **Docling Models Device** | Hardcoded or defaulted to CPU | Dynamic detection: `AcceleratorOptions(device=AcceleratorDevice.CUDA)` |
+| **OCR Acceleration** | CPU single/multi-thread | GPU-accelerated RapidOCR (`GPU device with ID: 0`) |
+| **TableFormer & Layout** | CPU matrix operations | Parallel Tensor Core acceleration |
+| **Service Architecture** | Single CLI script / minimal container | Production FastAPI microservice with Celery queue |
+
+#### Why Upstream Defaults to CPU
+The upstream repository targets universal portability across developer laptops, CI/CD runners (like GitHub Actions), and platforms without dedicated GPUs. To keep the Docker image small (~300MB vs ~3GB+ with CUDA libraries), they explicitly install the CPU-only PyTorch wheel. Our harness provides a dedicated, production-ready GPU parser container that leverages hardware acceleration for large document volume.
+
 ### Enabling GPU on Ubuntu Host
 
 Run on the host machine:
