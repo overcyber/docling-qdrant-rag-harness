@@ -1,27 +1,41 @@
 # Validation status
 
-Version: `2.0.0`
+Version: `2.1.0`
 
-## Completed in the build environment
+## Build-time validation
 
-- Python syntax compilation for all microservices;
-- Pydantic schema tests for all three chunkers and all three retrieval modes;
-- Docker Compose YAML parse and structural checks;
-- MkDocs YAML/navigation target validation;
-- Google Colab notebook JSON and Python code-cell syntax validation;
-- shell syntax validation for validation/smoke scripts;
-- local Markdown link validation;
-- stale endpoint/default checks (`8003`, old 420-token default);
-- ZIP integrity and SHA-256 are produced during final packaging.
+A validação automatizada cobre:
+
+- compilação sintática de todos os serviços Python;
+- schemas dos três chunkers e três modos de retrieval;
+- schemas dos quatro providers LLM;
+- ingestão direta de texto, multi-corpus e Agent Profile;
+- payloads nativos do Ollama e extensões llama.cpp/vLLM;
+- YAML estrutural do Docker Compose;
+- presença dos serviços core e profiles opcionais;
+- MkDocs/navigation;
+- notebook Colab JSON + sintaxe das code cells;
+- OpenAPI da FastAPI quando as dependências runtime estão instaladas;
+- criação do schema do control plane em SQLite para teste sem dependência externa;
+- shell syntax dos scripts;
+- ausência de arquivos de secrets conhecidos no pacote.
+
+Execute:
+
+```bash
+./scripts/validate.sh
+```
 
 ## Runtime integration
 
-This build environment does not expose a Docker/Podman daemon, so the full container stack cannot be launched here. After extraction, run:
+Após iniciar os containers:
 
 ```bash
-cp .env.example .env
-make up
-make smoke
+./scripts/smoke_test.sh
 ```
 
-The smoke test performs liveness/readiness checks, uploads a document, waits for the asynchronous Celery job and executes hybrid RAG retrieval.
+O smoke test verifica readiness, ingestão direta de texto assíncrona e busca híbrida limitada ao corpus de teste.
+
+## Limitação do ambiente de construção
+
+Este ambiente de construção não expõe daemon Docker/Podman; `docker compose up` não foi executado aqui. A validação estática e unitária foi concluída, mas o smoke test deve ser executado num host com Docker.

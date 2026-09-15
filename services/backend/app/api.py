@@ -1,26 +1,42 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
+from .agent_api import router as agent_router
 from .config import settings
+from .control_plane import init_control_plane
 from .ingestion_api import router as ingestion_router
 from .rag_api import router as rag_router
 from .system_api import router as system_router
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if settings.control_plane_enabled:
+        init_control_plane()
+    yield
+
+
 TAGS_METADATA = [
     {
         "name": "documents",
-        "description": "Asynchronous ingestion, status inspection and document lifecycle operations.",
+        "description": "Asynchronous file/text ingestion, corpus assignment, job status and document lifecycle.",
     },
     {
         "name": "rag",
-        "description": "Dense, sparse and hybrid retrieval, context assembly and optional RAG generation.",
+        "description": "Dense, sparse and hybrid retrieval, multi-corpus context, chat and SSE streaming.",
+    },
+    {
+        "name": "agents",
+        "description": "PostgreSQL-backed corpus registry, prompt templates and reusable agent profiles.",
     },
     {
         "name": "system",
-        "description": "Health, readiness and safe runtime configuration introspection.",
+        "description": "Health, readiness, provider/model discovery and safe runtime configuration introspection.",
     },
 ]
 
@@ -38,6 +54,7 @@ app = FastAPI(
     openapi_tags=TAGS_METADATA,
     contact={"name": "RAG Harness Operator"},
     license_info={"name": "Project-specific; see repository LICENSE if present"},
+    lifespan=lifespan,
 )
 
 if settings.api_allowed_hosts and settings.api_allowed_hosts != ["*"]:
@@ -54,3 +71,4 @@ app.add_middleware(
 app.include_router(system_router)
 app.include_router(ingestion_router)
 app.include_router(rag_router)
+app.include_router(agent_router)

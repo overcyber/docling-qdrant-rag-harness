@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: init up down logs ps smoke validate docs monitoring clean
+.PHONY: init up down logs ps smoke validate docs monitoring events ollama llama-cpp vllm clean
 
 init:
 	@test -f .env || cp .env.example .env
@@ -13,6 +13,18 @@ docs: init
 
 monitoring: init
 	docker compose --profile monitoring up -d flower
+
+events: init
+	docker compose --profile events up -d nats
+
+ollama: init
+	docker compose --profile ollama up -d ollama
+
+llama-cpp: init
+	docker compose --profile llama-cpp up -d llama-cpp
+
+vllm: init
+	docker compose --profile vllm up -d vllm
 
 validate:
 	bash scripts/validate.sh

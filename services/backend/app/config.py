@@ -23,7 +23,7 @@ class Settings(BaseSettings):
         "Unified document ingestion and advanced RAG API backed by Docling, "
         "Qdrant, Redis and Celery."
     )
-    api_version: str = "2.0.0"
+    api_version: str = "2.1.0"
     api_docs_enabled: bool = True
     api_docs_url: str = "/docs"
     api_redoc_url: str = "/redoc"
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     api_allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
     api_cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     api_cors_allow_credentials: bool = False
-    api_cors_allow_methods: list[str] = Field(default_factory=lambda: ["GET", "POST", "DELETE", "OPTIONS"])
+    api_cors_allow_methods: list[str] = Field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     api_cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
     api_max_batch_files: int = 100
     api_upload_buffer_mb: int = 1
@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     api_key: str = ""
     tenant_header_name: str = "X-Tenant-ID"
     default_tenant_id: str = "default"
+
+    # Durable control plane (agent profiles, prompt templates, corpus registry, audit)
+    control_plane_enabled: bool = True
+    control_plane_auto_create: bool = True
+    database_url: str = "postgresql+psycopg://rag:rag@postgres:5432/rag"
+    default_corpus_id: str = "default"
+
+    # Optional NATS event bus. Celery remains the authoritative work queue.
+    nats_enabled: bool = False
+    nats_url: str = "nats://nats:4222"
+    nats_subject_prefix: str = "rag"
 
     # Redis / Celery
     redis_url: str = "redis://redis:6379/0"
@@ -107,11 +118,29 @@ class Settings(BaseSettings):
     chat_history_messages: int = 8
     max_context_chars: int = 60000
 
-    # Optional OpenAI-compatible LLM
+    # LLM providers. Provider-specific adapters preserve native capabilities.
+    llm_provider: str = "openai_compatible"
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_api_key: str = ""
+    ollama_model: str = ""
+
+    llama_cpp_base_url: str = "http://llama-cpp:8080/v1"
+    llama_cpp_api_key: str = ""
+    llama_cpp_model: str = ""
+
+    vllm_base_url: str = "http://vllm:8000/v1"
+    vllm_api_key: str = ""
+    vllm_model: str = ""
+
     llm_temperature: float = 0.1
+    llm_top_p: float = 0.9
+    llm_max_tokens: int = 2048
+    llm_presence_penalty: float = 0.0
+    llm_frequency_penalty: float = 0.0
     llm_timeout_seconds: int = 120
 
     @field_validator(
@@ -136,6 +165,14 @@ class Settings(BaseSettings):
         value = value.strip().lower().replace("-", "_")
         if value not in {"hybrid", "hierarchical", "line_based"}:
             raise ValueError("CHUNKER_TYPE must be hybrid, hierarchical or line_based")
+        return value
+
+    @field_validator("llm_provider")
+    @classmethod
+    def validate_llm_provider(cls, value: str) -> str:
+        value = value.strip().lower().replace("-", "_")
+        if value not in {"openai_compatible", "ollama", "llama_cpp", "vllm"}:
+            raise ValueError("LLM_PROVIDER must be openai_compatible, ollama, llama_cpp or vllm")
         return value
 
     @field_validator("retrieval_mode")
@@ -198,12 +235,24 @@ class Settings(BaseSettings):
                 "score_threshold": self.default_score_threshold,
                 "reranker_enabled": self.reranker_enabled,
             },
+            "control_plane": {
+                "enabled": self.control_plane_enabled,
+                "auto_create": self.control_plane_auto_create,
+                "default_corpus_id": self.default_corpus_id,
+                "nats_enabled": self.nats_enabled,
+            },
             "models": {
                 "dense_model": self.dense_model,
                 "sparse_model": self.sparse_model,
                 "bm25_language": self.bm25_language,
                 "embedding_dim_fallback": self.embedding_dim,
-                "llm_configured": bool(self.llm_base_url and self.llm_model),
+                "llm_provider": self.llm_provider,
+                "providers": {
+                    "openai_compatible": {"configured": bool(self.llm_base_url), "model_configured": bool(self.llm_model), "base_url": self.llm_base_url, "model": self.llm_model},
+                    "ollama": {"configured": bool(self.ollama_base_url), "model_configured": bool(self.ollama_model), "base_url": self.ollama_base_url, "model": self.ollama_model},
+                    "llama_cpp": {"configured": bool(self.llama_cpp_base_url), "model_configured": bool(self.llama_cpp_model), "base_url": self.llama_cpp_base_url, "model": self.llama_cpp_model},
+                    "vllm": {"configured": bool(self.vllm_base_url), "model_configured": bool(self.vllm_model), "base_url": self.vllm_base_url, "model": self.vllm_model},
+                },
             },
         }
 

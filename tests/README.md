@@ -1,19 +1,9 @@
 # Tests
 
-Static validation:
+Execute com:
 
 ```bash
-./scripts/validate.sh
+PYTHONPATH=services/backend python -m unittest discover -s tests -v
 ```
 
-Schema unit tests (requires backend Python dependencies):
-
-```bash
-PYTHONPATH=services/backend python -m unittest tests/test_schemas.py
-```
-
-Full integration smoke test after Docker Compose is running:
-
-```bash
-./scripts/smoke_test.sh
-```
+A suíte cobre schemas dos três chunkers, retrieval, multi-corpus, ingestão direta de texto, Agent Profiles, os quatro providers LLM, mapeamento nativo do Ollama, extensões llama.cpp/vLLM e proteção de campos reservados do request ao LLM.

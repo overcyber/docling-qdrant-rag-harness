@@ -8,6 +8,9 @@ nav:
   - Architecture: architecture.md
   - API guide: api.md
   - Chunking: chunking.md
+  - LLM providers: llm-providers.md
+  - Control plane: control-plane.md
+  - Legacy port matrix: legacy-port.md
   - Configuration: configuration.md
   - Agent integration: agent-integration.md
   - Google Colab: colab.md

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ from .qdrant_store import (
     find_document_by_fingerprint,
     list_document_chunks,
 )
-from .schemas import ProcessingOptions
+from .schemas import ProcessingOptions, TextIngestRequest
 from .state_keys import ingest_reservation_key, job_owner_key
 from .tasks import ingest_document
 
@@ -117,11 +118,19 @@ def effective_ingestion_profile(processing_options: dict[str, Any]) -> dict[str,
     }
 
 
-def ingest_fingerprint(sha256: str, user_metadata: dict[str, Any], processing_options: dict[str, Any]) -> str:
-    """Fingerprint source bytes + effective parser profile + retrieval metadata."""
+def normalize_corpus_id(value: str | None) -> str:
+    corpus_id = (value or settings.default_corpus_id).strip()
+    if not corpus_id or len(corpus_id) > 128 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", corpus_id):
+        raise HTTPException(400, "corpus_id must match [A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+    return corpus_id
+
+
+def ingest_fingerprint(sha256: str, corpus_id: str, user_metadata: dict[str, Any], processing_options: dict[str, Any]) -> str:
+    """Fingerprint source bytes + corpus + effective parser profile + retrieval metadata."""
     canonical = json.dumps(
         {
             "source_sha256": sha256,
+            "corpus_id": corpus_id,
             "effective_processing_profile": effective_ingestion_profile(processing_options),
             "user_metadata": user_metadata,
         },
@@ -169,6 +178,7 @@ def queue_document(
     *,
     document_id: str,
     tenant: str,
+    corpus_id: str,
     path: str,
     filename: str,
     sha256: str,
@@ -179,7 +189,7 @@ def queue_document(
     deduplicate = processing_options.get("deduplicate")
     if deduplicate is None:
         deduplicate = settings.default_deduplicate
-    fingerprint = ingest_fingerprint(sha256, user_metadata, processing_options)
+    fingerprint = ingest_fingerprint(sha256, corpus_id, user_metadata, processing_options)
     job_id = str(uuid.uuid4())
     reservation_key: str | None = None
 
@@ -194,6 +204,7 @@ def queue_document(
                     "job_id": None,
                     "sha256": sha256,
                     "filename": payload.get("filename", filename),
+                    "corpus_id": payload.get("corpus_id", corpus_id),
                     "bytes": size,
                     "status": "duplicate",
                     "duplicate_of": payload.get("document_id"),
@@ -225,6 +236,7 @@ def queue_document(
                     "job_id": pending.get("job_id"),
                     "sha256": sha256,
                     "filename": pending.get("filename", filename),
+                    "corpus_id": corpus_id,
                     "bytes": size,
                     "status": "duplicate_pending",
                     "duplicate_of": pending.get("document_id"),
@@ -236,6 +248,7 @@ def queue_document(
             kwargs={
                 "document_id": document_id,
                 "tenant_id": tenant,
+                "corpus_id": corpus_id,
                 "file_path": path,
                 "filename": filename,
                 "sha256": sha256,
@@ -261,6 +274,7 @@ def queue_document(
         "sha256": sha256,
         "ingest_fingerprint": fingerprint,
         "filename": filename,
+        "corpus_id": corpus_id,
         "bytes": size,
         "status": "queued",
         "processing_options": processing_options,
@@ -279,6 +293,7 @@ def queue_document(
 )
 async def upload_document(
     file: UploadFile = File(..., description="PDF, DOCX, TXT, MD or MARKDOWN file"),
+    corpus_id: str | None = Form(default=None, description="Logical corpus namespace; defaults to DEFAULT_CORPUS_ID"),
     metadata: str | None = Form(default=None, description="Arbitrary JSON metadata stored in Qdrant"),
     processing_options: str | None = Form(
         default=None,
@@ -293,15 +308,59 @@ async def upload_document(
 ):
     user_metadata = parse_metadata(metadata)
     options = parse_processing_options(processing_options)
+    corpus = normalize_corpus_id(corpus_id)
     document_id, path, sha256, size, filename = await save_upload(file, tenant)
     return queue_document(
         document_id=document_id,
         tenant=tenant,
+        corpus_id=corpus,
         path=path,
         filename=filename,
         sha256=sha256,
         size=size,
         user_metadata=user_metadata,
+        processing_options=options,
+    )
+
+
+@router.post(
+    "/documents/text",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Ingest raw text through the same asynchronous Docling/chunking pipeline",
+)
+def ingest_text(req: TextIngestRequest, tenant: str = Depends(tenant_id)):
+    corpus = normalize_corpus_id(req.corpus_id)
+    document_id = str(uuid.uuid4())
+    tenant_dir = Path(settings.upload_dir) / tenant
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    requested = Path(req.filename or "").name
+    if requested:
+        suffix = Path(requested).suffix.lower()
+        if suffix not in {".txt", ".md", ".markdown"}:
+            requested = f"{requested}.md"
+        filename = requested
+    else:
+        safe_title = re.sub(r"[^A-Za-z0-9._-]+", "-", (req.title or "text-document")).strip("-._")[:120]
+        filename = f"{safe_title or 'text-document'}.md"
+    path = tenant_dir / f"{document_id}{Path(filename).suffix.lower()}"
+    raw = req.text.encode("utf-8")
+    limit = settings.max_file_mb * 1024 * 1024
+    if len(raw) > limit:
+        raise HTTPException(413, f"Text exceeds {settings.max_file_mb} MB")
+    path.write_bytes(raw)
+    metadata = dict(req.metadata)
+    if req.title:
+        metadata.setdefault("title", req.title)
+    options = req.processing_options.model_dump(mode="json", exclude_none=True)
+    return queue_document(
+        document_id=document_id,
+        tenant=tenant,
+        corpus_id=corpus,
+        path=str(path),
+        filename=filename,
+        sha256=hashlib.sha256(raw).hexdigest(),
+        size=len(raw),
+        user_metadata=metadata,
         processing_options=options,
     )
 
@@ -313,6 +372,7 @@ async def upload_document(
 )
 async def upload_batch(
     files: list[UploadFile] = File(...),
+    corpus_id: str | None = Form(default=None),
     metadata: str | None = Form(default=None),
     processing_options: str | None = Form(default=None),
     tenant: str = Depends(tenant_id),
@@ -322,6 +382,7 @@ async def upload_batch(
 
     user_metadata = parse_metadata(metadata)
     options = parse_processing_options(processing_options)
+    corpus = normalize_corpus_id(corpus_id)
     jobs: list[dict[str, Any]] = []
     for file in files:
         document_id, path, sha256, size, filename = await save_upload(file, tenant)
@@ -329,6 +390,7 @@ async def upload_batch(
             queue_document(
                 document_id=document_id,
                 tenant=tenant,
+                corpus_id=corpus,
                 path=path,
                 filename=filename,
                 sha256=sha256,
@@ -385,6 +447,7 @@ def get_document(
         "document_id": document_id,
         "tenant_id": tenant,
         "filename": first.get("filename"),
+        "corpus_id": first.get("corpus_id", settings.default_corpus_id),
         "sha256": first.get("sha256"),
         "chunker_type": first.get("chunker_type"),
         "chunking_config": first.get("chunking_config", {}),

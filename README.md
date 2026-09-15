@@ -1,59 +1,57 @@
-# Docling Qdrant Advanced RAG Harness
+# Docling Qdrant Advanced RAG Agent Harness
 
-Microservice harness for high-volume document ingestion and advanced Retrieval-Augmented Generation (RAG) using **Docling**, **Qdrant**, **Redis**, **Celery** and a single public **FastAPI** API.
+Harness de microserviços para ingestão documental em volume e RAG avançado com **Docling**, **Qdrant**, **Redis/Celery**, **PostgreSQL** e uma API pública **FastAPI**. A versão 2.1 incorpora as partes úteis do ingestor/chatbot legado sem regredir o pipeline atual.
 
-The public API serves both sides of the lifecycle:
+## Capacidades
 
-- document ingestion and indexing;
-- asynchronous job status;
-- dense, sparse and hybrid search;
-- evidence/context assembly for external agents;
-- optional RAG chat through any OpenAI-compatible LLM endpoint;
-- embedding-space identity guard to prevent mixing incompatible dense/sparse models.
+- ingestão assíncrona de PDF, DOCX, TXT e Markdown;
+- ingestão direta de texto via JSON (`POST /v1/documents/text`);
+- três chunkers Docling: `hybrid`, `hierarchical` e `line_based`;
+- embeddings dense + sparse e retrieval `hybrid` com RRF;
+- reranking opcional;
+- `corpus_id` lógico e consulta multi-corpus sem criar uma collection Qdrant por chatbot;
+- API RAG de busca, contexto, chat e **streaming SSE**;
+- providers LLM explícitos: **OpenAI-compatible, Ollama, llama.cpp server e vLLM**;
+- descoberta de modelos nos runtimes suportados;
+- parâmetros avançados de geração (`temperature`, `top_p`, `top_k`, `min_p`, penalties, Mirostat e extensões controladas);
+- PostgreSQL como control plane para **corpora, prompt templates e agent profiles**;
+- memória conversacional curta em Redis, configurável por agente;
+- NATS opcional como event bus; Celery/Redis continua sendo a fila de trabalho;
+- multi-tenant por `X-Tenant-ID`;
+- deduplicação por conteúdo + corpus + perfil de processamento + metadata, com reserva atômica no Redis;
+- Swagger, ReDoc, MkDocs, testes, GitHub Actions e notebook Colab.
 
-## Main architecture
+## Arquitetura
 
 ```text
-Client / Chatbot / Agent
-          |
-          v
-+---------------------------+
-| Unified FastAPI API :8000 |
-| /v1/documents             |
-| /v1/rag/search            |
-| /v1/rag/context           |
-| /v1/rag/chat              |
-+------+--------------------+
-       |
-       +--> Redis/Celery --> Worker --> Docling parser
-       |                         |          |
-       |                         |          +--> HybridChunker
-       |                         |          +--> HierarchicalChunker
-       |                         |          +--> LineBasedTokenChunker
-       |                         |
-       |                         +--> Embedder --> Qdrant
-       |
-       +--> Embedder --> Qdrant --> retrieval/RRF/rerank
-       |
-       +--> Redis conversation memory
+Client / UI / Agent
+        |
+        v
++------------------------------------------+
+| FastAPI :8000                            |
+| documents | RAG | streaming | agents    |
++----+----------------+--------------------+
+     |                |
+     |                +----> PostgreSQL
+     |                      corpora / prompts / agents / audit
+     |
+     +----> Redis/Celery ----> Worker
+     |                           |----> Docling parser
+     |                           |----> Embedder
+     |                           +----> Qdrant
+     |
+     +----> Embedder ----> Qdrant ----> RRF/rerank
+     |
+     +----> Redis conversation memory
+     |
+     +----> LLM provider
+     |       |-- OpenAI-compatible
+     |       |-- Ollama native /api/chat
+     |       |-- llama.cpp server /v1/chat/completions
+     |       +-- vLLM /v1/chat/completions
+     |
+     +----> NATS (optional event bus)
 ```
-
-## Supported input
-
-- PDF
-- DOCX
-- TXT
-- Markdown (`.md`, `.markdown`)
-
-## Three chunking strategies
-
-The chunker can be selected globally through `.env` or overridden **per upload**. Deduplication is processing-aware and protected against concurrent duplicate uploads with an in-flight Redis reservation, so the same document can be indexed with different chunkers without collision:
-
-1. `hybrid` — default; hierarchy-aware and tokenizer-aware split/merge.
-2. `hierarchical` — preserves document structural elements and hierarchy.
-3. `line_based` — token-aware but line-preserving; useful for tables, code and logs.
-
-See [docs/chunking.md](docs/chunking.md).
 
 ## Quick start
 
@@ -62,69 +60,142 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Check:
+Verifique:
 
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
 ```
 
-The complete typed `ProcessingOptions` schema can also be validated at `POST /v1/config/processing-options/validate`; this makes all three chunker variants visible directly in OpenAPI.
+Swagger: `http://localhost:8000/docs`  
+ReDoc: `http://localhost:8000/redoc`
 
-Interactive API documentation:
-
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
-
-Standalone documentation site:
-
-```bash
-docker compose --profile documentation up -d docs
-```
-
-Then open `http://localhost:8004`.
-
-## Example ingestion
+## Ingestão de arquivo
 
 ```bash
 curl -X POST http://localhost:8000/v1/documents \
   -H 'X-Tenant-ID: lab' \
   -F 'file=@report.pdf' \
-  -F 'metadata={"project":"alpha","classification":"internal"}' \
-  -F 'processing_options={"chunking":{"type":"hybrid","max_tokens":120},"pdf":{"do_ocr":true,"do_table_structure":true}}'
+  -F 'corpus_id=tese' \
+  -F 'metadata={"project":"alpha"}' \
+  -F 'processing_options={"chunking":{"type":"hybrid","max_tokens":120}}'
 ```
 
-The request returns HTTP `202` with `document_id` and `job_id`.
+## Ingestão direta de texto
 
 ```bash
-curl -H 'X-Tenant-ID: lab' http://localhost:8000/v1/jobs/JOB_ID
-```
-
-## Example RAG search
-
-```bash
-curl -X POST http://localhost:8000/v1/rag/search \
-  -H 'Content-Type: application/json' \
+curl -X POST http://localhost:8000/v1/documents/text \
   -H 'X-Tenant-ID: lab' \
+  -H 'Content-Type: application/json' \
   -d '{
-    "query": "Qual metodologia o relatório utiliza?",
-    "mode": "hybrid",
-    "top_k": 8,
-    "candidate_k": 40,
-    "rerank": false,
-    "filters": {"project":"alpha", "chunker_type":"hybrid"}
+    "title":"Nota experimental",
+    "text":"Conteúdo que deve entrar no RAG sem criar um arquivo manualmente.",
+    "corpus_id":"experimentos",
+    "metadata":{"source":"api"},
+    "processing_options":{"chunking":{"type":"hybrid"}}
   }'
 ```
 
-Built-in retrieval filters include `filename`, `sha256`, `document_id`, `chunker_type` and `ingest_fingerprint`; any other key is resolved under `user_metadata.<key>`.
+## Busca multi-corpus
 
-## Documentation
+```bash
+curl -X POST http://localhost:8000/v1/rag/search \
+  -H 'X-Tenant-ID: lab' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query":"Quais evidências sustentam a hipótese?",
+    "mode":"hybrid",
+    "corpora":["tese","papers","experimentos"],
+    "top_k":8,
+    "candidate_k":40,
+    "rerank":true
+  }'
+```
+
+## Providers LLM
+
+Selecione o provider globalmente com `LLM_PROVIDER` ou por requisição/Agent Profile.
+
+| Provider | API usada pelo harness | Profile Docker |
+|---|---|---|
+| `openai_compatible` | `/v1/chat/completions` ou base configurada | externo |
+| `ollama` | API nativa `/api/chat`; `/api/tags` para descoberta | `ollama` |
+| `llama_cpp` | `/v1/chat/completions`; `/v1/models` | `llama-cpp` |
+| `vllm` | `/v1/chat/completions`; `/v1/models` | `vllm` |
+
+Exemplo Ollama:
+
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:8b
+
+docker compose --profile ollama up -d ollama
+docker compose exec ollama ollama pull qwen3:8b
+```
+
+Exemplo llama.cpp server:
+
+```bash
+mkdir -p models/llama.cpp
+# copie seu GGUF para models/llama.cpp/model.gguf
+
+LLM_PROVIDER=llama_cpp
+LLAMA_CPP_MODEL=auto
+LLAMA_CPP_MODEL_PATH=/models/model.gguf
+
+docker compose --profile llama-cpp up -d llama-cpp
+```
+
+Veja [docs/llm-providers.md](docs/llm-providers.md).
+
+## Streaming SSE
+
+```bash
+curl -N -X POST http://localhost:8000/v1/rag/chat/stream \
+  -H 'X-Tenant-ID: lab' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question":"Resuma os achados e cite as fontes.",
+    "corpora":["tese"],
+    "provider":"ollama",
+    "model":"qwen3:8b"
+  }'
+```
+
+Eventos: `retrieval`, `source`, `model`, `token`, `completion` e `error`.
+
+## Agent Profiles e prompts
+
+O control plane PostgreSQL mantém configuração durável, sem armazenar chaves de API nos perfis:
+
+```text
+/v1/corpora
+/v1/prompt-templates
+/v1/agents
+/v1/agents/{agent_id}/chat
+/v1/agents/{agent_id}/chat/stream
+```
+
+Um perfil pode fixar corpora, provider/model, retrieval, geração, prompt e política de memória. Veja [docs/control-plane.md](docs/control-plane.md).
+
+## NATS opcional
+
+Celery/Redis continua responsável pelos jobs. NATS é apenas event bus para eventos como `document.started`, `document.indexed`, `document.failed` e `query.completed`.
+
+```bash
+NATS_ENABLED=true
+docker compose --profile events up -d nats
+```
+
+## Documentação
 
 - [Quick start](docs/quickstart.md)
 - [Architecture](docs/architecture.md)
 - [API guide](docs/api.md)
 - [Chunking](docs/chunking.md)
+- [LLM providers](docs/llm-providers.md)
+- [Control plane / Agent Profiles](docs/control-plane.md)
+- [Legacy port matrix](docs/legacy-port.md)
 - [Configuration](docs/configuration.md)
 - [Agent integration](docs/agent-integration.md)
 - [Google Colab](docs/colab.md)
@@ -133,32 +204,24 @@ Built-in retrieval filters include `filename`, `sha256`, `document_id`, `chunker
 - [Troubleshooting](docs/troubleshooting.md)
 - [Validation status](VALIDATION.md)
 
-## Validation
+Standalone MkDocs:
 
-Run:
+```bash
+docker compose --profile documentation up -d docs
+```
+
+## Validação
 
 ```bash
 ./scripts/validate.sh
 ```
 
-After containers are up:
+Com os containers ativos:
 
 ```bash
 ./scripts/smoke_test.sh
 ```
 
-## Publicação no GitHub
+## GitHub
 
-O repositório de destino é `overcyber/docling-qdrant-rag-harness`. A publicação manual também pode ser feita com:
-
-```bash
-./scripts/publish_github.sh git@github.com:overcyber/docling-qdrant-rag-harness.git
-```
-
-Ou por HTTPS:
-
-```bash
-./scripts/publish_github.sh https://github.com/overcyber/docling-qdrant-rag-harness.git
-```
-
-O script inicializa Git quando necessário, usa `main`, impede o staging de `.env`, chaves `.pem/.key` e chaves SSH comuns, cria o commit e faz o push.
+Repositório: `overcyber/docling-qdrant-rag-harness`.

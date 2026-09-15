@@ -29,6 +29,32 @@ services:
       retries: 30
     restart: unless-stopped
 
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag}
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag}
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_BIND_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "${NATS_BIND_HOST:-127.0.0.1}:${NATS_CLIENT_PORT:-4222}:4222"
+      - "${NATS_BIND_HOST:-127.0.0.1}:${NATS_MONITOR_PORT:-8222}:8222"
+    profiles: ["events"]
+    restart: unless-stopped
+
   parser-docling:
     build:
       context: ./services/parser
@@ -112,6 +138,11 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-rag}
+      NATS_URL: nats://nats:4222
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLAMA_CPP_BASE_URL: http://llama-cpp:8080/v1
+      VLLM_BASE_URL: http://vllm:8000/v1
       PARSER_URL: http://parser-docling:8001
       EMBEDDER_URL: http://embedder:8002
       UPLOAD_DIR: /data/uploads
@@ -123,6 +154,8 @@ services:
       redis:
         condition: service_healthy
       qdrant:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       parser-docling:
         condition: service_healthy
@@ -154,6 +187,8 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-rag}
+      NATS_URL: nats://nats:4222
       PARSER_URL: http://parser-docling:8001
       EMBEDDER_URL: http://embedder:8002
       UPLOAD_DIR: /data/uploads
@@ -168,6 +203,72 @@ services:
         condition: service_healthy
       embedder:
         condition: service_healthy
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "${OLLAMA_BIND_HOST:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    profiles: ["ollama"]
+    restart: unless-stopped
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "-lc"]
+    command: ["test -n '${OLLAMA_MODEL:-}' && ollama pull '${OLLAMA_MODEL}' || (echo 'Set OLLAMA_MODEL before using ollama-pull' && exit 2)"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      - ollama
+    profiles: ["ollama-pull"]
+
+  llama-cpp:
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    command:
+      - -m
+      - ${LLAMA_CPP_MODEL_PATH:-/models/model.gguf}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - -c
+      - ${LLAMA_CPP_CONTEXT_SIZE:-8192}
+      - -np
+      - ${LLAMA_CPP_PARALLEL:-2}
+    volumes:
+      - ${LLAMA_CPP_MODELS_DIR:-./models/llama.cpp}:/models:ro
+    ports:
+      - "${LLAMA_CPP_BIND_HOST:-127.0.0.1}:${LLAMA_CPP_PORT:-8080}:8080"
+    profiles: ["llama-cpp"]
+    restart: unless-stopped
+
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    command:
+      - --model
+      - ${VLLM_MODEL:-}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --generation-config
+      - vllm
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - hf_models:/root/.cache/huggingface
+    ports:
+      - "${VLLM_BIND_HOST:-127.0.0.1}:${VLLM_PORT:-8005}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    profiles: ["vllm"]
     restart: unless-stopped
 
   docs:
@@ -195,6 +296,8 @@ services:
 volumes:
   redis_data:
   qdrant_data:
+  postgres_data:
   uploads:
   hf_models:
   fastembed_models:
+  ollama_models:

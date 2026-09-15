@@ -48,7 +48,6 @@ def _assert_embedding_identity(c: QdrantClient, expected: dict[str, str]) -> Non
         return
     stored = (points[0].payload or {}).get("embedding_models") or {}
     if not isinstance(stored, dict) or not stored:
-        # Collections created by older harness versions may not carry model identity.
         return
     mismatches = {
         key: {"collection": stored.get(key), "request": expected.get(key)}
@@ -83,8 +82,6 @@ def ensure_collection(dense_size: int | None = None, embedding_identity: dict[st
                 },
             )
         except Exception:
-            # Multiple ingestion workers may race while creating the first collection.
-            # Suppress only the benign case where another worker created it first.
             if not c.collection_exists(settings.qdrant_collection):
                 raise
 
@@ -98,7 +95,7 @@ def ensure_collection(dense_size: int | None = None, embedding_identity: dict[st
         )
     _assert_embedding_identity(c, expected_identity)
 
-    keyword_fields = ["tenant_id", "document_id", "sha256", "ingest_fingerprint", "filename", "chunker_type"]
+    keyword_fields = ["tenant_id", "corpus_id", "document_id", "sha256", "ingest_fingerprint", "filename", "chunker_type"]
     keyword_fields.extend(f"user_metadata.{x}" for x in settings.qdrant_metadata_index_fields)
     for field in keyword_fields:
         try:
@@ -109,7 +106,6 @@ def ensure_collection(dense_size: int | None = None, embedding_identity: dict[st
                 wait=True,
             )
         except Exception:
-            # Creating an already-existing payload index is harmless.
             pass
 
 
@@ -118,6 +114,7 @@ def filter_for(
     document_id: str | None = None,
     sha256: str | None = None,
     filters: dict[str, Any] | None = None,
+    corpora: list[str] | None = None,
 ) -> models.Filter:
     must: list[models.FieldCondition] = [
         models.FieldCondition(key="tenant_id", match=models.MatchValue(value=tenant))
@@ -126,13 +123,15 @@ def filter_for(
         must.append(models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id)))
     if sha256:
         must.append(models.FieldCondition(key="sha256", match=models.MatchValue(value=sha256)))
+    if corpora:
+        must.append(models.FieldCondition(key="corpus_id", match=models.MatchAny(any=corpora)))
 
     for key, value in (filters or {}).items():
         if value is None:
             continue
         payload_key = (
             key
-            if key in {"filename", "sha256", "document_id", "chunker_type", "ingest_fingerprint"}
+            if key in {"filename", "sha256", "document_id", "chunker_type", "ingest_fingerprint", "corpus_id"}
             else f"user_metadata.{key}"
         )
         if isinstance(value, list):
@@ -154,7 +153,6 @@ def delete_document(tenant: str, document_id: str) -> None:
 
 
 def find_document_by_sha(tenant: str, sha256: str) -> dict[str, Any] | None:
-    """Return one indexed chunk for a tenant/hash pair, if present."""
     c = client()
     if not c.collection_exists(settings.qdrant_collection):
         return None
@@ -171,9 +169,7 @@ def find_document_by_sha(tenant: str, sha256: str) -> dict[str, Any] | None:
     return {"id": str(p.id), "payload": p.payload or {}}
 
 
-
 def find_document_by_fingerprint(tenant: str, ingest_fingerprint: str) -> dict[str, Any] | None:
-    """Return one indexed chunk for an exact content+processing+metadata fingerprint."""
     c = client()
     if not c.collection_exists(settings.qdrant_collection):
         return None
@@ -194,6 +190,7 @@ def find_document_by_fingerprint(tenant: str, ingest_fingerprint: str) -> dict[s
         return None
     point = points[0]
     return {"id": str(point.id), "payload": point.payload or {}}
+
 
 def list_document_chunks(tenant: str, document_id: str, limit: int = 100) -> list[dict[str, Any]]:
     c = client()
@@ -220,12 +217,13 @@ def search_points(
     top_k: int,
     candidate_k: int,
     filters: dict[str, Any] | None = None,
+    corpora: list[str] | None = None,
     score_threshold: float | None = None,
     embedding_identity: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     ensure_collection(dense_size=len(dense), embedding_identity=embedding_identity)
     c = client()
-    qfilter = filter_for(tenant, filters=filters)
+    qfilter = filter_for(tenant, filters=filters, corpora=corpora)
     sparse_vector = models.SparseVector(
         indices=[int(x) for x in sparse["indices"]],
         values=[float(x) for x in sparse["values"]],
@@ -255,18 +253,8 @@ def search_points(
         response = c.query_points(
             collection_name=settings.qdrant_collection,
             prefetch=[
-                models.Prefetch(
-                    query=sparse_vector,
-                    using="sparse",
-                    limit=candidate_k,
-                    filter=qfilter,
-                ),
-                models.Prefetch(
-                    query=dense,
-                    using="dense",
-                    limit=candidate_k,
-                    filter=qfilter,
-                ),
+                models.Prefetch(query=sparse_vector, using="sparse", limit=candidate_k, filter=qfilter),
+                models.Prefetch(query=dense, using="dense", limit=candidate_k, filter=qfilter),
             ],
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=candidate_k,
