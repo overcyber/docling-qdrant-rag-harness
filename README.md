@@ -70,6 +70,71 @@ curl http://localhost:8000/ready
 Swagger: `http://localhost:8000/docs`  
 ReDoc: `http://localhost:8000/redoc`
 
+## Suporte a GPU NVIDIA via Docker
+
+Para acelerar os modelos neurais do **Docling** (Layout detection, TableFormer, OCR) e os modelos de embeddings utilizando a GPU NVIDIA do host:
+
+### 1. Configurar o repositório do NVIDIA Container Toolkit
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+```
+
+### 2. Instalar o Toolkit
+
+Atualize a lista de pacotes locais e instale o pacote `nvidia-container-toolkit`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+```
+
+### 3. Configurar o Container Runtime
+
+Configure o runtime correspondente ao seu ambiente para usar a camada de driver NVIDIA:
+
+#### Para Docker 🐋
+Atualiza o arquivo `/etc/docker/daemon.json` e reinicia o serviço Docker:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+#### Para Containerd 📦
+Atualiza o arquivo `/etc/containerd/config.toml` e reinicia o containerd:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=containerd
+sudo systemctl restart containerd
+```
+
+### 4. Verificar a Instalação
+
+Verifique se os containers conseguem se comunicar com a sua GPU executando um container de teste CUDA leve:
+
+```bash
+sudo docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+```
+
+### 5. Iniciar o Harness com suporte a GPU
+
+Inicie o harness com a sobreposição de GPU ([docker-compose.gpu.yml](docker-compose.gpu.yml)):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+Verifique se o serviço de parser Docling detectou e inicializou o dispositivo CUDA:
+
+```bash
+curl http://localhost:8001/health
+# Retorna: {"status":"ok","cuda_available":true,"cuda_device":"NVIDIA GeForce RTX ..."}
+```
+
 ## Ingestão de arquivo
 
 ```bash
