@@ -464,7 +464,12 @@ def remove_document(document_id: str, tenant: str = Depends(tenant_id)):
     except ValueError as exc:
         raise HTTPException(400, "document_id must be a UUID") from exc
     delete_document(tenant, document_id)
-    tenant_dir = Path(settings.upload_dir) / tenant
+    upload_root = Path(settings.upload_dir).resolve()
+    tenant_dir = (upload_root / tenant).resolve()
+    try:
+        tenant_dir.relative_to(upload_root)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid tenant path") from exc
     for candidate in tenant_dir.glob(f"{document_id}.*"):
         candidate.unlink(missing_ok=True)
     return {"status": "deleted", "document_id": document_id, "tenant_id": tenant}
