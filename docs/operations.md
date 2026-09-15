@@ -107,6 +107,49 @@ The E2E suite tests:
 10. Conversational memory and retrieval-only chat fallback.
 11. Multi-document batch upload (`POST /v1/documents/batch`).
 
+## GPU acceleration and Docling models
+
+Docling utilizes deep learning models for layout analysis, table structure recognition, OCR, and vision enrichment:
+- **Layout Model**: RT-DETR / LayoutLM neural models that classify regions into titles, paragraphs, tables, pictures, code, and formulas.
+- **TableFormer**: Deep learning model that reconstructs complex table structures, spanning cells, rows, and headers.
+- **OCR Engines**: EasyOCR (runs natively on PyTorch with CUDA acceleration), Tesseract, or RapidOCR.
+- **Embedder Models**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` dense embedding models.
+
+### Why GPU is not active by default
+
+Docker containers cannot access the host GPU unless:
+1. The **NVIDIA Container Toolkit** (`nvidia-container-toolkit` and `nvidia-container-cli`) is installed on the host Linux system.
+2. The Docker daemon is configured with the `nvidia` runtime (`nvidia-ctk runtime configure --runtime=docker`).
+3. The Docker Compose file explicitly reserves GPU devices for the services.
+
+### Enabling GPU on Ubuntu Host
+
+Run on the host machine:
+
+```bash
+# 1. Configure NVIDIA Container Toolkit repository
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# 2. Install the toolkit
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+
+# 3. Configure Docker to use the NVIDIA runtime and restart Docker daemon
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# 4. Start the stack with GPU override
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Verify GPU acceleration in the parser service:
+```bash
+curl http://localhost:8001/health
+# Response shows: {"status":"healthy","cuda_available":true,"device_name":"NVIDIA GeForce RTX 5060 Laptop GPU"}
+```
+
 ## CI
 
 `.github/workflows/validate.yml` runs a lightweight validation on pushes and pull requests. It checks Python syntax, Pydantic request schemas, MkDocs navigation targets, Colab code-cell syntax and `docker compose config`. It intentionally does not download Docling/FastEmbed models or execute OCR in CI; use `scripts/smoke_test.sh` against a built stack for integration validation.
