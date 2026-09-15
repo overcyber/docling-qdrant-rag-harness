@@ -44,6 +44,25 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(profile.provider, "ollama")
         self.assertEqual(profile.generation.top_k, 40)
 
+    def test_auth_compare_digest(self):
+        try:
+            from app.auth import require_auth
+            from app.config import settings
+            from fastapi import HTTPException
+        except ImportError:
+            self.skipTest("pydantic_settings not installed on host")
+            return
+        orig_key = settings.api_key
+        try:
+            settings.api_key = "secret123"
+            self.assertIsNone(require_auth(authorization="Bearer secret123"))
+            self.assertIsNone(require_auth(x_api_key="secret123"))
+            with self.assertRaises(HTTPException) as cm:
+                require_auth(x_api_key="wrong")
+            self.assertEqual(cm.exception.status_code, 401)
+        finally:
+            settings.api_key = orig_key
+
 
 if __name__ == "__main__":
     unittest.main()

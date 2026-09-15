@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 
 from fastapi import Header, HTTPException, Request
 
@@ -16,7 +17,10 @@ def require_auth(
     """Require either Bearer auth or X-API-Key when API_KEY is configured."""
     if not settings.api_key:
         return
-    if authorization == f"Bearer {settings.api_key}" or x_api_key == settings.api_key:
+    expected_bearer = f"Bearer {settings.api_key}"
+    valid_bearer = bool(authorization and secrets.compare_digest(authorization, expected_bearer))
+    valid_key = bool(x_api_key and secrets.compare_digest(x_api_key, settings.api_key))
+    if valid_bearer or valid_key:
         return
     raise HTTPException(status_code=401, detail="Invalid or missing API credential")
 
