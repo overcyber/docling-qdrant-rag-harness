@@ -71,6 +71,28 @@ curl -X POST http://localhost:8000/v1/rag/search \
 ```
 
 
+## GPU acceleration (optional)
+
+To enable NVIDIA GPU acceleration for Docling's layout analysis, TableFormer, and OCR models:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+See [Operations](operations.md#gpu-acceleration-and-docling-models) for complete NVIDIA Container Toolkit host prerequisites.
+
+## Batch folder ingestion
+
+To ingest an entire directory of documents with automatic SHA-256 duplicate detection:
+
+```bash
+python3 scripts/ingest_folder.py \
+  --dir /path/to/documents \
+  --tenant demo \
+  --chunker hybrid \
+  --concurrency 2
+```
+
 ## Network exposure
 
 The Compose stack binds public host ports to `127.0.0.1` by default. For a remote server, prefer a TLS reverse proxy in front of the API. If direct host exposure is necessary, set `API_BIND_HOST=0.0.0.0` and configure `API_KEY`, `API_ALLOWED_HOSTS`, firewall rules and CORS deliberately.

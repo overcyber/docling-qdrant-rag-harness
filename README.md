@@ -161,6 +161,65 @@ curl -X POST http://localhost:8000/v1/documents/text \
   }'
 ```
 
+## Ingestão em lote de pastas (`scripts/ingest_folder.py`)
+
+Para processar diretórios inteiros contendo dezenas ou centenas de documentos (`.pdf`, `.docx`, `.txt`, `.md`), utilize o script CLI [`scripts/ingest_folder.py`](scripts/ingest_folder.py).
+
+### Principais recursos:
+- **Detecção e Rejeição Automática de Duplicatas**: Calcula o hash SHA-256 localmente antes de enviar e consulta o endpoint `/v1/documents/check-duplicate`. Arquivos que já foram indexados são ignorados instantaneamente em milissegundos sem reenviar bytes nem reprocessar modelos neurais no Docling.
+- **Controle de Concorrência**: Envia arquivos e acompanha as tarefas Celery em paralelo via `--concurrency N`.
+- **Estratégias de Chunking**: Permite selecionar `--chunker hybrid`, `hierarchical` ou `line_based` e definir `--max-tokens`.
+- **OCR sob Demanda**: Flag `--ocr` opcional para documentos digitalizados ou imagens.
+
+### Exemplos práticos:
+
+```bash
+# 1. Ingestão padrão híbrida (com detecção de duplicatas e monitoramento em tempo real)
+python3 scripts/ingest_folder.py \
+  --dir /opt/pdf-ingestao \
+  --tenant mestrado-cybersec \
+  --corpus-id massivos \
+  --chunker hybrid \
+  --max-tokens 120 \
+  --concurrency 2
+
+# 2. Ingestão com OCR ativado e chunker hierárquico
+python3 scripts/ingest_folder.py \
+  --dir /caminho/para/documentos \
+  --tenant mestrado-cybersec \
+  --chunker hierarchical \
+  --ocr \
+  --concurrency 4
+
+# 3. Teste rápido limitando aos primeiros 5 arquivos
+python3 scripts/ingest_folder.py \
+  --dir /opt/pdf-ingestao \
+  --tenant mestrado-cybersec \
+  --limit 5
+```
+
+**Exemplo de saída no terminal:**
+```text
+============================================================
+Iniciando ingestão: /opt/pdf-ingestao -> http://localhost:8000
+Tenant: mestrado-cybersec | Chunker: hybrid (max_tokens=120) | OCR: False
+Total de arquivos encontrados: 76
+============================================================
+[1/76] An_Efficient_SQL_Injection_Detection_System... -> [JÁ INGERIDO (IGNORADO)] (0.18s)
+[2/76] DeepSyslog_Deep_Anomaly_Detection_on_Syslog... -> Enfileirado (job: 8f3c1d2e...)
+  -> [2/76] Job 8f3c1d2e...: PROGRESS (parsing: 10%)
+  -> [2/76] Job 8f3c1d2e...: PROGRESS (embedding: 40%)
+  -> [2/76] Job 8f3c1d2e...: INDEXADO com sucesso! Chunks: 84 (14.2s)
+...
+============================================================
+RESUMO DA INGESTÃO:
+  Total processado: 76
+  Sucesso / Novos: 42
+  Ignorados (já ingeridos): 34
+  Falhas: 0
+============================================================
+```
+
 ## Busca multi-corpus
 
 ```bash
@@ -175,6 +234,54 @@ curl -X POST http://localhost:8000/v1/rag/search \
     "candidate_k":40,
     "rerank":true
   }'
+```
+
+## Montagem de contexto RAG (`POST /v1/rag/context`)
+
+Para agentes externos (LangChain, LlamaIndex, agentes Autogen ou chamadas diretas a LLMs), este endpoint realiza a recuperação híbrida no Qdrant e formata o bloco textual pronto para prompt com marcadores de citação `[S1]`, `[S2]`:
+
+```bash
+curl -X POST http://localhost:8000/v1/rag/context \
+  -H 'X-Tenant-ID: lab' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "Quais métricas de acurácia foram obtidas pelo modelo?",
+    "corpora": ["tese"],
+    "mode": "hybrid",
+    "top_k": 3
+  }'
+```
+
+## Exemplo de uso em Python (Consumo RAG)
+
+Script limpo e direto para buscar evidências e consumir o RAG a partir de qualquer aplicação Python:
+
+```python
+import requests
+
+API_URL = "http://localhost:8000"
+TENANT = "mestrado-cybersec"
+
+def consultar_rag(pergunta: str, corpus: str = "massivos"):
+    response = requests.post(
+        f"{API_URL}/v1/rag/search",
+        headers={"X-Tenant-ID": TENANT},
+        json={
+            "query": pergunta,
+            "corpora": [corpus],
+            "mode": "hybrid",
+            "top_k": 3
+        }
+    )
+    dados = response.json()
+    print(f"\n=== Pergunta: {pergunta} ===")
+    for item in dados.get("results", []):
+        print(f"\n[{item['citation']}] Score: {item['score']:.4f} | Arquivo: {item['filename']} (Pág: {item['pages']})")
+        print(f"Seção: {' > '.join(item.get('headings', []))}")
+        print(f"Texto extraído:\n{item['text'][:280]}...\n" + "-"*50)
+
+if __name__ == "__main__":
+    consultar_rag("Como redes neurais detectam ataques de injeção de SQL?")
 ```
 
 ## Providers LLM
@@ -257,6 +364,7 @@ docker compose --profile events up -d nats
 - [Quick start](docs/quickstart.md)
 - [Architecture](docs/architecture.md)
 - [API guide](docs/api.md)
+- [RAG Queries & Qdrant](docs/rag-querying.md) — Visualização de texto no Qdrant, payload e exemplos de busca
 - [Chunking](docs/chunking.md)
 - [LLM providers](docs/llm-providers.md)
 - [Control plane / Agent Profiles](docs/control-plane.md)
@@ -264,7 +372,7 @@ docker compose --profile events up -d nats
 - [Configuration](docs/configuration.md)
 - [Agent integration](docs/agent-integration.md)
 - [Google Colab](docs/colab.md)
-- [Operations](docs/operations.md)
+- [Operations & GPU](docs/operations.md) — Escalonamento, tolerância a falhas e ativação de GPU
 - [Security](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Validation status](VALIDATION.md)
@@ -275,13 +383,23 @@ Standalone MkDocs:
 docker compose --profile documentation up -d docs
 ```
 
-## Validação
+## Scripts e Validação
+
+O projeto conta com scripts utilitários prontos para automação, ingestão em lote e verificação:
+
+| Script | Função | Exemplo de Execução |
+|---|---|---|
+| [`scripts/ingest_folder.py`](scripts/ingest_folder.py) | Ingestão em lote de pastas com **detecção automática de duplicatas por SHA-256** | `python3 scripts/ingest_folder.py --dir /caminho --tenant lab --chunker hybrid` |
+| [`scripts/smoke_test.sh`](scripts/smoke_test.sh) | Smoke test ponta a ponta na stack ativa (upload, parser, embedder e busca híbrida) | `./scripts/smoke_test.sh` |
+| [`scripts/validate.sh`](scripts/validate.sh) | Validação estática, checagem de schemas Pydantic, OpenAPI, MkDocs e **22 testes E2E** | `./scripts/validate.sh` |
+
+Para rodar a suíte completa de validação:
 
 ```bash
 ./scripts/validate.sh
 ```
 
-Com os containers ativos:
+Com os containers ativos, para rodar o teste rápido de fumaça:
 
 ```bash
 ./scripts/smoke_test.sh
