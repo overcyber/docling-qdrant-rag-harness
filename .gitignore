@@ -1,0 +1,30 @@
+# Runtime configuration / secrets
+.env
+*.env.local
+
+# Runtime data
+data/
+uploads/
+qdrant_storage/
+redis_data/
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Documentation build
+site/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Archives / generated
+*.zip

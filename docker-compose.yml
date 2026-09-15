@@ -1,0 +1,200 @@
+name: docling-rag-harness
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_BIND_HOST:-127.0.0.1}:${REDIS_BIND_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    ports:
+      - "${QDRANT_BIND_HOST:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_BIND_HOST:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q '18BD' /proc/net/tcp || grep -q '18BD' /proc/net/tcp6"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  parser-docling:
+    build:
+      context: ./services/parser
+    env_file: .env
+    environment:
+      MAX_FILE_MB: ${MAX_FILE_MB:-100}
+      CHUNKER_TYPE: ${CHUNKER_TYPE:-hybrid}
+      CHUNK_TOKENIZER_MODEL: ${CHUNK_TOKENIZER_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      CHUNK_MAX_TOKENS: ${CHUNK_MAX_TOKENS:-120}
+      CHUNK_HYBRID_MERGE_PEERS: ${CHUNK_HYBRID_MERGE_PEERS:-true}
+      CHUNK_HYBRID_REPEAT_TABLE_HEADER: ${CHUNK_HYBRID_REPEAT_TABLE_HEADER:-true}
+      CHUNK_HYBRID_OMIT_HEADER_ON_OVERFLOW: ${CHUNK_HYBRID_OMIT_HEADER_ON_OVERFLOW:-false}
+      CHUNK_HYBRID_ALWAYS_EMIT_HEADINGS: ${CHUNK_HYBRID_ALWAYS_EMIT_HEADINGS:-false}
+      CHUNK_HIERARCHICAL_MERGE_LIST_ITEMS: ${CHUNK_HIERARCHICAL_MERGE_LIST_ITEMS:-true}
+      CHUNK_HIERARCHICAL_ALWAYS_EMIT_HEADINGS: ${CHUNK_HIERARCHICAL_ALWAYS_EMIT_HEADINGS:-false}
+      CHUNK_LINE_PREFIX: ${CHUNK_LINE_PREFIX:-}
+      CHUNK_LINE_OMIT_PREFIX_ON_OVERFLOW: ${CHUNK_LINE_OMIT_PREFIX_ON_OVERFLOW:-false}
+      PDF_DO_OCR: ${PDF_DO_OCR:-true}
+      PDF_DO_TABLE_STRUCTURE: ${PDF_DO_TABLE_STRUCTURE:-true}
+      PDF_DO_CELL_MATCHING: ${PDF_DO_CELL_MATCHING:-true}
+      DOCLING_MAX_NUM_PAGES: ${DOCLING_MAX_NUM_PAGES:-1000}
+      PARSER_FULL_DOCLING_METADATA: ${PARSER_FULL_DOCLING_METADATA:-false}
+      HF_HOME: /models/huggingface
+      TRANSFORMERS_CACHE: /models/huggingface
+    volumes:
+      - hf_models:/models/huggingface
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  embedder:
+    build:
+      context: ./services/embedder
+    env_file: .env
+    environment:
+      DENSE_MODEL: ${DENSE_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      SPARSE_MODEL: ${SPARSE_MODEL:-Qdrant/bm25}
+      BM25_LANGUAGE: ${BM25_LANGUAGE:-portuguese}
+      RERANKER_MODEL: ${RERANKER_MODEL:-Xenova/ms-marco-MiniLM-L-6-v2}
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      FASTEMBED_CACHE_PATH: /models/fastembed
+    volumes:
+      - fastembed_models:/models/fastembed
+    expose:
+      - "8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./services/backend
+    command:
+      - uvicorn
+      - app.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "${API_WORKERS:-2}"
+      - --timeout-keep-alive
+      - "${API_KEEP_ALIVE:-5}"
+      - --log-level
+      - "${API_LOG_LEVEL:-info}"
+    env_file: .env
+    environment:
+      SERVICE_NAME: api
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+      PARSER_URL: http://parser-docling:8001
+      EMBEDDER_URL: http://embedder:8002
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "${API_BIND_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      parser-docling:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./services/backend
+    command:
+      - celery
+      - -A
+      - app.celery_app:celery_app
+      - worker
+      - --loglevel=${WORKER_LOG_LEVEL:-INFO}
+      - --concurrency=${WORKER_CONCURRENCY:-2}
+      - --prefetch-multiplier=1
+      - --max-tasks-per-child=${WORKER_MAX_TASKS_PER_CHILD:-20}
+    env_file: .env
+    environment:
+      SERVICE_NAME: worker
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+      PARSER_URL: http://parser-docling:8001
+      EMBEDDER_URL: http://embedder:8002
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      parser-docling:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    restart: unless-stopped
+
+  docs:
+    image: squidfunk/mkdocs-material:9.6.20
+    working_dir: /workspace
+    command: ["serve", "--dev-addr=0.0.0.0:8004"]
+    volumes:
+      - ./:/workspace:ro
+    ports:
+      - "${DOCS_BIND_HOST:-127.0.0.1}:${DOCS_PORT:-8004}:8004"
+    profiles: ["documentation"]
+    restart: unless-stopped
+
+  flower:
+    image: mher/flower:2.0.1
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+    ports:
+      - "${FLOWER_BIND_HOST:-127.0.0.1}:${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles: ["monitoring"]
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  qdrant_data:
+  uploads:
+  hf_models:
+  fastembed_models:

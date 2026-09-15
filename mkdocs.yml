@@ -1,0 +1,28 @@
+site_name: Docling Qdrant Advanced RAG Harness
+site_description: Unified document ingestion and advanced RAG microservice harness.
+repo_name: docling-qdrant-rag-harness
+site_dir: /tmp/mkdocs-site
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - Architecture: architecture.md
+  - API guide: api.md
+  - Chunking: chunking.md
+  - Configuration: configuration.md
+  - Agent integration: agent-integration.md
+  - Google Colab: colab.md
+  - Operations: operations.md
+  - Security: security.md
+  - Troubleshooting: troubleshooting.md
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+markdown_extensions:
+  - admonition
+  - tables
+  - fenced_code
+  - toc:
+      permalink: true
