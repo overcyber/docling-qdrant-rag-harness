@@ -331,7 +331,15 @@ async def upload_document(
 def ingest_text(req: TextIngestRequest, tenant: str = Depends(tenant_id)):
     corpus = normalize_corpus_id(req.corpus_id)
     document_id = str(uuid.uuid4())
-    tenant_dir = Path(settings.upload_dir) / tenant
+    upload_root = Path(settings.upload_dir).resolve()
+    safe_tenant = re.sub(r"[^A-Za-z0-9._-]+", "-", tenant).strip("-._")
+    if not safe_tenant:
+        raise HTTPException(status_code=400, detail="Invalid tenant")
+    tenant_dir = (upload_root / safe_tenant).resolve()
+    try:
+        tenant_dir.relative_to(upload_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid tenant")
     tenant_dir.mkdir(parents=True, exist_ok=True)
     requested = Path(req.filename or "").name
     if requested:
@@ -342,7 +350,11 @@ def ingest_text(req: TextIngestRequest, tenant: str = Depends(tenant_id)):
     else:
         safe_title = re.sub(r"[^A-Za-z0-9._-]+", "-", (req.title or "text-document")).strip("-._")[:120]
         filename = f"{safe_title or 'text-document'}.md"
-    path = tenant_dir / f"{document_id}{Path(filename).suffix.lower()}"
+    path = (tenant_dir / f"{document_id}{Path(filename).suffix.lower()}").resolve()
+    try:
+        path.relative_to(upload_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid output path")
     raw = req.text.encode("utf-8")
     limit = settings.max_file_mb * 1024 * 1024
     if len(raw) > limit:
