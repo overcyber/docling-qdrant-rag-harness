@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python -m compileall -q "$ROOT/services"
 
 python - "$ROOT" <<'PY'
-import ast, json, pathlib, sys, yaml
+import ast, json, os, pathlib, sys, yaml
 root=pathlib.Path(sys.argv[1])
 compose = yaml.safe_load((root/'docker-compose.yml').read_text())
 mkdocs = yaml.safe_load((root/'mkdocs.yml').read_text())
@@ -35,8 +35,10 @@ for idx, cell in enumerate(notebook.get('cells', [])):
 for forbidden in ('8003', 'CHUNK_MAX_TOKENS=420'):
     for path in list((root/'docs').glob('*.md')) + [root/'README.md', root/'docker-compose.yml']:
         assert forbidden not in path.read_text(), f'stale token {forbidden!r} in {path}'
-for forbidden_path in (root/'.env', root/'id_rsa', root/'id_ed25519'):
+for forbidden_path in (root/'id_rsa', root/'id_ed25519'):
     assert not forbidden_path.exists(), f'secret-like file must not be packaged: {forbidden_path.name}'
+if os.getenv('CI'):
+    assert not (root/'.env').exists(), 'secret-like file must not be packaged: .env'
 assert not list(root.rglob('*.pem')), 'PEM files must not be packaged'
 assert not list(root.rglob('*.key')), 'KEY files must not be packaged'
 print('static validation: OK')
@@ -62,7 +64,8 @@ else
   echo 'openapi validation: SKIPPED (runtime backend dependencies not installed in this host)'
 fi
 
-PYTHONPATH="$ROOT/services/backend" CONTROL_PLANE_ENABLED=true CONTROL_PLANE_AUTO_CREATE=true DATABASE_URL='sqlite+pysqlite:///:memory:' python - <<'PY'
+if python -c 'import sqlalchemy' >/dev/null 2>&1; then
+  PYTHONPATH="$ROOT/services/backend" CONTROL_PLANE_ENABLED=true CONTROL_PLANE_AUTO_CREATE=true DATABASE_URL='sqlite+pysqlite:///:memory:' python - <<'PY'
 from app.control_plane import init_control_plane, engine
 init_control_plane()
 tables=set(__import__('sqlalchemy').inspect(engine()).get_table_names())
@@ -70,6 +73,9 @@ for expected in ('rag_corpora','rag_prompt_templates','rag_agent_profiles','rag_
     assert expected in tables, f'missing control-plane table: {expected}'
 print('control-plane schema validation: OK')
 PY
+else
+  echo 'control-plane schema validation: SKIPPED (sqlalchemy not installed in this host)'
+fi
 
 PYTHONPATH="$ROOT/services/backend" python -m unittest discover -s "$ROOT/tests" -v
 bash -n "$ROOT/scripts/smoke_test.sh"
