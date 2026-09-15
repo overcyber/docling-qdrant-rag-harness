@@ -64,6 +64,49 @@ When deduplication is enabled, the API first checks Qdrant for an indexed equiva
 
 Each newly indexed point records the dense model, sparse model and BM25 language. Before indexing or retrieval, the harness compares the active embedder identity with an existing point in the collection and rejects incompatible spaces even when vector dimensions are equal. A model migration therefore requires a new `QDRANT_COLLECTION` or a full reindex.
 
+## Batch directory ingestion
+
+For ingesting entire directories of PDFs or other supported formats with progress tracking and job polling, use `scripts/ingest_folder.py`:
+
+```bash
+python3 scripts/ingest_folder.py \
+  --dir /path/to/documents \
+  --tenant my-tenant \
+  --chunker hybrid \
+  --max-tokens 120 \
+  --concurrency 2
+```
+
+Optional flags:
+- `--ocr`: Enable OCR in Docling (useful for scanned PDFs, defaults to false for text PDFs).
+- `--limit N`: Ingest only the first N documents.
+- `--concurrency N`: Number of concurrent worker uploads/polling tasks.
+
+## Automated test suite
+
+Run the complete static checks, schema validation, and end-to-end integration suite:
+
+```bash
+# Static checks and discovery unit tests:
+bash scripts/validate.sh
+
+# Direct end-to-end integration tests against running containers:
+python3 tests/test_system_e2e.py
+```
+
+The E2E suite tests:
+1. Health and readiness probe endpoints.
+2. Runtime configuration and chunking option validation.
+3. Ingestion across all three chunker variants (`hybrid`, `hierarchical`, `line_based`).
+4. Dense, sparse (BM25), and hybrid (RRF) retrieval modes.
+5. User metadata filtering and chunker-type scoping.
+6. Context assembly with citation tokens (`[S1]`, `[S2]`).
+7. Strict multi-tenant isolation in Qdrant collections.
+8. Document deletion lifecycle and Qdrant chunk cleanup.
+9. In-flight and persistent deduplication.
+10. Conversational memory and retrieval-only chat fallback.
+11. Multi-document batch upload (`POST /v1/documents/batch`).
+
 ## CI
 
 `.github/workflows/validate.yml` runs a lightweight validation on pushes and pull requests. It checks Python syntax, Pydantic request schemas, MkDocs navigation targets, Colab code-cell syntax and `docker compose config`. It intentionally does not download Docling/FastEmbed models or execute OCR in CI; use `scripts/smoke_test.sh` against a built stack for integration validation.

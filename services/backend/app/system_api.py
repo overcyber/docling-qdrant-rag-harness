@@ -50,7 +50,7 @@ def ready() -> dict[str, Any]:
             ok = False
     for name, url in {"parser": f"{settings.parser_url}/health", "embedder": f"{settings.embedder_url}/health"}.items():
         try:
-            with httpx.Client(timeout=3.0) as http:
+            with httpx.Client(timeout=10.0) as http:
                 response = http.get(url)
                 response.raise_for_status()
             checks[name] = True

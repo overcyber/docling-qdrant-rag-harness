@@ -10,9 +10,10 @@ from typing import Any, Literal
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
+import torch
 from docling.chunking import HierarchicalChunker, HybridChunker
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import AcceleratorDevice, AcceleratorOptions, PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.transforms.chunker.line_chunker import LineBasedTokenChunker
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
@@ -175,6 +176,16 @@ def get_converter(do_ocr: bool, do_table_structure: bool, do_cell_matching: bool
     pipeline_options.do_ocr = do_ocr
     pipeline_options.do_table_structure = do_table_structure
     pipeline_options.table_structure_options.do_cell_matching = do_cell_matching
+    if torch.cuda.is_available():
+        pipeline_options.accelerator_options = AcceleratorOptions(
+            num_threads=4,
+            device=AcceleratorDevice.CUDA,
+        )
+    else:
+        pipeline_options.accelerator_options = AcceleratorOptions(
+            num_threads=4,
+            device=AcceleratorDevice.CPU,
+        )
     return DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
@@ -290,6 +301,7 @@ def parse_options(raw: str | None) -> ParseOptions:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    cuda_avail = torch.cuda.is_available()
     return {
         "status": "ok",
         "service": "parser-docling",
@@ -297,11 +309,14 @@ def health() -> dict[str, Any]:
         "tokenizer_model": DEFAULT_TOKENIZER_MODEL,
         "chunk_max_tokens": DEFAULT_MAX_TOKENS,
         "full_docling_metadata": FULL_DOCLING_METADATA,
+        "cuda_available": cuda_avail,
+        "cuda_device": torch.cuda.get_device_name(0) if cuda_avail else None,
+        "cuda_device_count": torch.cuda.device_count() if cuda_avail else 0,
     }
 
 
 @app.post("/parse")
-async def parse(
+def parse(
     file: UploadFile = File(...),
     options: str | None = Form(default=None),
 ) -> dict[str, Any]:
@@ -320,7 +335,7 @@ async def parse(
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = Path(tmp.name)
             while True:
-                block = await file.read(1024 * 1024)
+                block = file.file.read(1024 * 1024)
                 if not block:
                     break
                 size += len(block)

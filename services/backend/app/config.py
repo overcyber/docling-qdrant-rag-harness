@@ -30,11 +30,11 @@ class Settings(BaseSettings):
     api_openapi_url: str = "/openapi.json"
     api_root_path: str = ""
     api_public_base_url: str = ""
-    api_allowed_hosts: list[str] = Field(default_factory=lambda: ["*"])
-    api_cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    api_allowed_hosts: list[str] | str = Field(default_factory=lambda: ["*"])
+    api_cors_origins: list[str] | str = Field(default_factory=lambda: ["*"])
     api_cors_allow_credentials: bool = False
-    api_cors_allow_methods: list[str] = Field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-    api_cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
+    api_cors_allow_methods: list[str] | str = Field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    api_cors_allow_headers: list[str] | str = Field(default_factory=lambda: ["*"])
     api_max_batch_files: int = 100
     api_upload_buffer_mb: int = 1
 
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "documents_v2"
-    qdrant_metadata_index_fields: list[str] = Field(default_factory=list)
+    qdrant_metadata_index_fields: list[str] | str = Field(default_factory=list)
     embedding_dim: int = 384
     dense_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     sparse_model: str = "Qdrant/bm25"
