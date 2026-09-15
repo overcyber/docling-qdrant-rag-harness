@@ -141,6 +141,17 @@ def ingest_fingerprint(sha256: str, corpus_id: str, user_metadata: dict[str, Any
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def resolve_tenant_dir(tenant: str) -> Path:
+    upload_root = Path(settings.upload_dir).resolve()
+    tenant_dir = (upload_root / tenant).resolve()
+    try:
+        tenant_dir.relative_to(upload_root)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid tenant path") from exc
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    return tenant_dir
+
+
 async def save_upload(file: UploadFile, tenant: str) -> tuple[str, str, str, int, str]:
     filename = Path(file.filename or "document").name
     suffix = Path(filename).suffix.lower()
@@ -148,8 +159,7 @@ async def save_upload(file: UploadFile, tenant: str) -> tuple[str, str, str, int
         raise HTTPException(415, f"Unsupported extension {suffix}; allowed: {sorted(SUPPORTED)}")
 
     document_id = str(uuid.uuid4())
-    tenant_dir = Path(settings.upload_dir) / tenant
-    tenant_dir.mkdir(parents=True, exist_ok=True)
+    tenant_dir = resolve_tenant_dir(tenant)
     path = tenant_dir / f"{document_id}{suffix}"
     h = hashlib.sha256()
     size = 0
@@ -476,12 +486,7 @@ def remove_document(document_id: str, tenant: str = Depends(tenant_id)):
     except ValueError as exc:
         raise HTTPException(400, "document_id must be a UUID") from exc
     delete_document(tenant, document_id)
-    upload_root = Path(settings.upload_dir).resolve()
-    tenant_dir = (upload_root / tenant).resolve()
-    try:
-        tenant_dir.relative_to(upload_root)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid tenant path") from exc
+    tenant_dir = resolve_tenant_dir(tenant)
     for candidate in tenant_dir.glob(f"{document_id}.*"):
         candidate.unlink(missing_ok=True)
     return {"status": "deleted", "document_id": document_id, "tenant_id": tenant}
