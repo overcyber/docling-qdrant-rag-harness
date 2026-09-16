@@ -53,7 +53,7 @@ print('schema validation: OK')
 PY
 
 if python -c 'import redis, celery, qdrant_client' >/dev/null 2>&1; then
-  PYTHONPATH="$ROOT/services/backend" CONTROL_PLANE_ENABLED=false python - <<'PY'
+  PYTHONPATH="$ROOT/services/backend" CONTROL_PLANE_ENABLED=false UPLOAD_DIR="${TMPDIR:-/tmp}/rag_uploads" python - <<'PY'
 from app.api import app
 paths=app.openapi().get('paths', {})
 for expected in ('/v1/documents/text', '/v1/rag/chat/stream', '/v1/corpora', '/v1/prompt-templates', '/v1/agents', '/v1/llm/providers'):
@@ -77,7 +77,7 @@ else
   echo 'control-plane schema validation: SKIPPED (sqlalchemy not installed in this host)'
 fi
 
-PYTHONPATH="$ROOT/services/backend" python -m unittest discover -s "$ROOT/tests" -v
+PYTHONPATH="$ROOT/services/backend" UPLOAD_DIR="${TMPDIR:-/tmp}/rag_uploads" python -m unittest discover -s "$ROOT/tests" -v
 bash -n "$ROOT/scripts/smoke_test.sh"
 bash -n "$ROOT/scripts/publish_github.sh"
 echo 'validation completed'

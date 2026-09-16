@@ -28,7 +28,10 @@ SUPPORTED = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 rdb = redis.Redis.from_url(settings.redis_url, decode_responses=True)
 
 
-Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+try:
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 
 def parse_metadata(raw: str | None) -> dict[str, Any]:
