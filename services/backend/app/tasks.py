@@ -61,7 +61,12 @@ def ingest_document(
     user_metadata: dict[str, Any] | None = None,
     processing_options: dict[str, Any] | None = None,
 ):
-    path = Path(file_path)
+    path = Path(file_path).resolve()
+    upload_root = Path(settings.upload_dir).resolve()
+    try:
+        path.relative_to(upload_root)
+    except ValueError as exc:
+        raise ValueError(f"Ingestion path {file_path} is outside upload directory") from exc
     if not path.exists():
         raise FileNotFoundError(file_path)
     processing_options = processing_options or {}

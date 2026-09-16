@@ -156,13 +156,25 @@ def resolve_tenant_dir(tenant: str) -> Path:
 
 async def save_upload(file: UploadFile, tenant: str) -> tuple[str, str, str, int, str]:
     filename = Path(file.filename or "document").name
-    suffix = Path(filename).suffix.lower()
-    if suffix not in SUPPORTED:
-        raise HTTPException(415, f"Unsupported extension {suffix}; allowed: {sorted(SUPPORTED)}")
+    raw_suffix = Path(filename).suffix.lower()
+    suffix_map = {
+        ".pdf": ".pdf",
+        ".docx": ".docx",
+        ".txt": ".txt",
+        ".md": ".md",
+        ".markdown": ".markdown",
+    }
+    final_suffix = suffix_map.get(raw_suffix)
+    if not final_suffix:
+        raise HTTPException(415, f"Unsupported extension {raw_suffix}; allowed: {sorted(SUPPORTED)}")
 
     document_id = str(uuid.uuid4())
     tenant_dir = resolve_tenant_dir(tenant)
-    path = tenant_dir / f"{document_id}{suffix}"
+    path = (tenant_dir / f"{document_id}{final_suffix}").resolve()
+    try:
+        path.relative_to(tenant_dir)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid upload path") from exc
     h = hashlib.sha256()
     size = 0
     limit = settings.max_file_mb * 1024 * 1024
@@ -343,31 +355,31 @@ async def upload_document(
 def ingest_text(req: TextIngestRequest, tenant: str = Depends(tenant_id)):
     corpus = normalize_corpus_id(req.corpus_id)
     document_id = str(uuid.uuid4())
-    upload_root = Path(settings.upload_dir).resolve()
-    safe_tenant = re.sub(r"[^A-Za-z0-9._-]+", "-", tenant).strip("-._")
-    if not safe_tenant:
-        raise HTTPException(status_code=400, detail="Invalid tenant")
-    tenant_dir = (upload_root / safe_tenant).resolve()
-    try:
-        tenant_dir.relative_to(upload_root)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid tenant")
-    tenant_dir.mkdir(parents=True, exist_ok=True)
+    tenant_dir = resolve_tenant_dir(tenant)
+
     requested = Path(req.filename or "").name
-    allowed_text_exts = {".txt", ".md", ".markdown"}
-    if requested:
-        requested_suffix = Path(requested).suffix.lower()
-        final_suffix = requested_suffix if requested_suffix in allowed_text_exts else ".md"
-        filename = requested if requested_suffix in allowed_text_exts else f"{requested}.md"
+    if requested.lower().endswith(".txt"):
+        final_suffix = ".txt"
+        filename = requested
+    elif requested.lower().endswith(".markdown"):
+        final_suffix = ".markdown"
+        filename = requested
+    elif requested.lower().endswith(".md"):
+        final_suffix = ".md"
+        filename = requested
+    elif requested:
+        final_suffix = ".md"
+        filename = f"{requested}.md"
     else:
         safe_title = re.sub(r"[^A-Za-z0-9._-]+", "-", (req.title or "text-document")).strip("-._")[:120]
         filename = f"{safe_title or 'text-document'}.md"
         final_suffix = ".md"
+
     path = (tenant_dir / f"{document_id}{final_suffix}").resolve()
     try:
         path.relative_to(tenant_dir)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid output path")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid output path") from exc
     raw = req.text.encode("utf-8")
     limit = settings.max_file_mb * 1024 * 1024
     if len(raw) > limit:
@@ -491,5 +503,9 @@ def remove_document(document_id: str, tenant: str = Depends(tenant_id)):
     delete_document(tenant, document_id)
     tenant_dir = resolve_tenant_dir(tenant)
     for candidate in tenant_dir.glob(f"{document_id}.*"):
-        candidate.unlink(missing_ok=True)
+        try:
+            candidate.resolve().relative_to(tenant_dir)
+            candidate.unlink(missing_ok=True)
+        except ValueError:
+            pass
     return {"status": "deleted", "document_id": document_id, "tenant_id": tenant}
