@@ -233,19 +233,19 @@ python3 scripts/ingest_folder.py \
 **Exemplo de saída no terminal:**
 ```text
 ===========================================================================
-📁 Diretório:    /opt/pdf-ingestao (76 arquivos)
-🏢 Tenant:       mestrado-cybersec | Corpus: default
-⚙️  Chunker:      hybrid (max_tokens: 120) | OCR: False
-🔄 Concorrência: 2 | Forçar Reingestão: False
-🚀 Aceleração:   CUDA ATIVO (NVIDIA GeForce RTX 5060 Laptop GPU)
+Diretorio:       /opt/pdf-ingestao (76 arquivos)
+Tenant:          mestrado-cybersec | Corpus: default
+Chunker:         hybrid (max_tokens: 120) | OCR: False
+Concorrencia:    2 | Forcar Reingestao: False
+Aceleracao:      CUDA ATIVO (NVIDIA GeForce RTX 5060 Laptop GPU)
 ===========================================================================
-[1/76] ⏭️  JÁ INGERIDO (IGNORADO): 24-1-MDM-apresentacoes.pdf [pre-check instantâneo] (ID existente: 99580fbd...)
-[2/76] ⏭️  JÁ INGERIDO (IGNORADO): A Survey on Data Selection... [pre-check instantâneo] (ID existente: 8b9d66b7...)
-[3/76] ✅ NOVO INGERIDO: Detection of SQL injection.pdf -> 149 chunks [GPU: NVIDIA GeForce RTX 5060 Laptop GPU] em 6.4s (ID: 4f82b6fc...)
+[1/76] [IGNORADO] JA INGERIDO: 24-1-MDM-apresentacoes.pdf [pre-check instantaneo] (ID existente: 99580fbd...)
+[2/76] [IGNORADO] JA INGERIDO: A Survey on Data Selection... [pre-check instantaneo] (ID existente: 8b9d66b7...)
+[3/76] [OK] INGERIDO: Detection of SQL injection.pdf -> 149 chunks [GPU: NVIDIA GeForce RTX 5060 Laptop GPU] em 6.4s (ID: 4f82b6fc...)
 ...
 ===========================================================================
-🏁 Concluído em 45.2s
-📊 Resumo: Novos Ingeridos: 12 | Já Ingeridos (Ignorados): 64 | Falhas: 0 | Novos Chunks: 1840
+Concluido em 45.2s
+Resumo: Novos Ingeridos: 12 | Ja Ingeridos (Ignorados): 64 | Falhas: 0 | Novos Chunks: 1840
 ===========================================================================
 ```
 

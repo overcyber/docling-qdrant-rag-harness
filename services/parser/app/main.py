@@ -403,6 +403,10 @@ def parse(
                 })
 
             if not out:
+                if not bool(pdf.get("do_ocr", True)):
+                    raise RuntimeError(
+                        "Docling produced zero text chunks. The document appears to be a scanned image-only PDF without an embedded text layer; enable OCR ('do_ocr': true) to extract content."
+                    )
                 raise RuntimeError("Docling produced zero chunks")
             elapsed = time.time() - start_time
             logger.info(

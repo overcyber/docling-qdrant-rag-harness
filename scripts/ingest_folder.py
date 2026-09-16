@@ -260,14 +260,14 @@ def main():
     parser_device = checks.get("parser_device", "CPU / Not detected")
 
     print("=" * 75)
-    print(f"📁 Diretório:    {args.dir} ({len(files)} arquivos)")
-    print(f"🏢 Tenant:       {args.tenant} | Corpus: {args.corpus}")
-    print(f"⚙️  Chunker:      {args.chunker} (max_tokens: {args.max_tokens}) | OCR: {args.ocr}")
-    print(f"🔄 Concorrência: {args.concurrency} | Forçar Reingestão: {args.force}")
+    print(f"Diretorio:       {args.dir} ({len(files)} arquivos)")
+    print(f"Tenant:          {args.tenant} | Corpus: {args.corpus}")
+    print(f"Chunker:         {args.chunker} (max_tokens: {args.max_tokens}) | OCR: {args.ocr}")
+    print(f"Concorrencia:    {args.concurrency} | Forcar Reingestao: {args.force}")
     if parser_cuda:
-        print(f"🚀 Aceleração:   CUDA ATIVO ({parser_device})")
+        print(f"Aceleracao:      CUDA ATIVO ({parser_device})")
     else:
-        print(f"⚠️  Aceleração:   {parser_device} (CPU)")
+        print(f"Aceleracao:      {parser_device} (CPU)")
     print("=" * 75)
 
     start_all = time.time()
@@ -305,20 +305,20 @@ def main():
                 dur = res.get("parse_duration_seconds", 0)
                 accel_str = f" [GPU: {accel_dev}]" if accel == "cuda" else " [CPU]"
                 dur_str = f" em {dur:.1f}s" if dur else ""
-                print(f"[{idx}/{len(files)}] ✅ NOVO INGERIDO: {fname} -> {chunks} chunks{accel_str}{dur_str} (ID: {res['document_id']})")
+                print(f"[{idx}/{len(files)}] [OK] INGERIDO: {fname} -> {chunks} chunks{accel_str}{dur_str} (ID: {res['document_id']})")
             elif status == "ALREADY_INGESTED":
                 already_ingested_count += 1
-                pre = " [pre-check instantâneo]" if res.get("pre_checked") else ""
-                print(f"[{idx}/{len(files)}] ⏭️  JÁ INGERIDO (IGNORADO): {fname}{pre} (ID existente: {res['document_id']})")
+                pre = " [pre-check instantaneo]" if res.get("pre_checked") else ""
+                print(f"[{idx}/{len(files)}] [IGNORADO] JA INGERIDO: {fname}{pre} (ID existente: {res['document_id']})")
             else:
                 fail_count += 1
-                print(f"[{idx}/{len(files)}] ❌ FALHA: {fname} -> {res.get('error') or res.get('status')}")
+                print(f"[{idx}/{len(files)}] [FALHA]: {fname} -> {res.get('error') or res.get('status')}")
 
     total_time = time.time() - start_all
     print("=" * 75)
-    print(f"🏁 Concluído em {total_time:.1f}s")
+    print(f"Concluido em {total_time:.1f}s")
     print(
-        f"📊 Resumo: Novos Ingeridos: {success_count} | Já Ingeridos (Ignorados): {already_ingested_count} | "
+        f"Resumo: Novos Ingeridos: {success_count} | Ja Ingeridos (Ignorados): {already_ingested_count} | "
         f"Falhas: {fail_count} | Novos Chunks: {total_chunks}"
     )
 
