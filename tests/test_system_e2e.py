@@ -72,6 +72,15 @@ def wait_for_job(job_id: str, tenant: str = "default", timeout: int = 120):
 
 class SystemDetailedE2ETests(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        try:
+            with urllib.request.urlopen(f"{API_BASE}/health", timeout=2) as resp:
+                if resp.status != 200:
+                    raise RuntimeError("API status not 200")
+        except Exception as exc:
+            raise unittest.SkipTest(f"Live API not running at {API_BASE}: {exc}")
+
     def test_01_health_and_readiness(self):
         """Test health and readiness endpoints."""
         health = make_req("/health")
