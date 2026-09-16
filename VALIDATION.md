@@ -58,11 +58,27 @@ All 6 microservices built and verified operational in Docker:
 10. **`test_10_rag_chat_retrieval_mode`**: Verifies `/v1/rag/chat` conversation memory management in Redis and retrieval-only fallback.
 11. **`test_11_batch_upload`**: Tests `/v1/documents/batch` multipart uploading multiple files concurrently.
 
-## 4. Real-World Document Ingestion Benchmark
+## 4. Real-World Document Ingestion & RAG Query Benchmarks
 
-- **Dataset**: 76 scientific and technical PDF documents copied to `/opt/pdf-ingestao`.
-- **Single PDF benchmark**: `An_Efficient_SQL_Injection_Detection_System_Using_Deep_Learning.pdf` (1.6 MB).
-  - Ingestion time: ~18s end-to-end.
-  - Chunks generated: 49 chunks with structural hierarchy and page provenance.
-  - Hybrid search query: Returned relevant citation `S1` with score `0.75`.
-- **Batch ingestion script**: `scripts/ingest_folder.py` verified with automatic duplicate skipping in 0.2s without redundant processing.
+### Benchmark A: Ingestão de Artigo e Busca Híbrida
+- **Arquivo**: `An_Efficient_SQL_Injection_Detection_System_Using_Deep_Learning.pdf` (1.6 MB)
+- **Chunks gerados**: 49 chunks com proveniência de página e cabeçalhos estruturais.
+- **Busca Híbrida**: Retornou citação `S1` com score de relevância `0.75`.
+
+### Benchmark B: Ingestão com GPU e Montagem de Contexto RAG
+- **Arquivo**: `Anomaly-based network intrusion detection- Techniques, systems and challenges.pdf` (366 KB)
+- **Tenant**: `mestrado-cybersec` | **Corpus**: `seguranca`
+- **Job ID**: `679db9cb-4f06-495f-9432-722233b5459d`
+- **Document ID**: `2ddec71b-e36e-463c-ba80-ba0e77243a1b`
+- **Chunks indexados no Qdrant**: 188 chunks
+- **Consulta via RAG (`POST /v1/rag/search`)**:
+  - **Query**: *"What are the main techniques, systems and challenges in anomaly-based network intrusion detection?"*
+  - **Score**: `0.6428` (Citação `S1`)
+  - **Seções recuperadas**: `"Anomaly-based network intrusion detection: Techniques, systems and challenges"` (Pág. 1) e `"4. Open issues and challenges"` (Pág. 8).
+- **Montagem de Contexto (`POST /v1/rag/context`)**:
+  - Contexto montado instantaneamente com tags de citação `[S1]`, `[S2]` pronto para consumo por LLMs.
+
+### Ingestão em Lote
+- **Script**: [`scripts/ingest_folder.py`](scripts/ingest_folder.py) testado com 76 PDFs em `/opt/pdf-ingestao`.
+- **Deduplicação**: Arquivos já ingeridos detectados e ignorados em 0.18s por hash SHA-256 sem reprocessamento.
+
