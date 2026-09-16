@@ -54,6 +54,10 @@ def ready() -> dict[str, Any]:
                 response = http.get(url)
                 response.raise_for_status()
             checks[name] = True
+            if name == "parser":
+                data = response.json()
+                checks["parser_cuda"] = bool(data.get("cuda_available"))
+                checks["parser_device"] = data.get("cuda_device") or "CPU"
         except Exception as exc:
             checks[name] = f"error: {type(exc).__name__}: {exc}"
             ok = False

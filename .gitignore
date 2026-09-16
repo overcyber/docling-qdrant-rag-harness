@@ -1,6 +1,7 @@
 # Runtime configuration / secrets
 .env
 *.env.local
+docker-compose.override.yml
 
 # Runtime data
 data/

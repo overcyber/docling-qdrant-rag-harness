@@ -1,8 +1,16 @@
 # Docker Compose override file to enable NVIDIA GPU acceleration for Docling Parser
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# (Or automatically enabled if docker-compose.override.yml is present)
 
 services:
   parser-docling:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     devices:
       - nvidia.com/gpu=all
     environment:

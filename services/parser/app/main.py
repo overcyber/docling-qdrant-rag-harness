@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +13,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 import torch
+
+logger = logging.getLogger("docling_parser")
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 from docling.chunking import HierarchicalChunker, HybridChunker
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import AcceleratorDevice, AcceleratorOptions, PdfPipelineOptions
@@ -329,6 +337,11 @@ def parse(
     chunking_config = effective["chunking"]
     tmp_path: Path | None = None
 
+    start_time = time.time()
+    cuda_avail = torch.cuda.is_available()
+    device_name = torch.cuda.get_device_name(0) if cuda_avail else "CPU"
+    accelerator_name = "cuda" if cuda_avail else "cpu"
+
     try:
         size = 0
         limit = MAX_FILE_MB * 1024 * 1024
@@ -342,6 +355,16 @@ def parse(
                 if size > limit:
                     raise HTTPException(413, f"File exceeds {MAX_FILE_MB} MB")
                 tmp.write(block)
+
+        logger.info(
+            "Starting parse for '%s' (%d bytes) [chunker=%s, ocr=%s, accelerator=%s (%s)]",
+            file.filename,
+            size,
+            chunking_config["type"],
+            bool(effective["pdf"]["do_ocr"]),
+            accelerator_name,
+            device_name,
+        )
 
         try:
             pdf = effective["pdf"]
@@ -381,6 +404,15 @@ def parse(
 
             if not out:
                 raise RuntimeError("Docling produced zero chunks")
+            elapsed = time.time() - start_time
+            logger.info(
+                "Parsed '%s' successfully in %.2fs [%s (%s)] -> %d chunks",
+                file.filename,
+                elapsed,
+                accelerator_name,
+                device_name,
+                len(out),
+            )
             return {
                 "filename": file.filename,
                 "chunks": out,
@@ -388,6 +420,9 @@ def parse(
                 "chunker_type": chunking_config["type"],
                 "chunking_config": chunking_config,
                 "processing_options": effective,
+                "accelerator": accelerator_name,
+                "accelerator_device": device_name,
+                "parse_duration_seconds": round(elapsed, 3),
             }
         except Exception as exc:
             if suffix in {".txt", ".md", ".markdown"}:
@@ -406,6 +441,7 @@ def parse(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Parsing failed for '%s': %s", file.filename, exc)
         raise HTTPException(422, f"Parsing failed: {type(exc).__name__}: {exc}") from exc
     finally:
         if tmp_path:

@@ -152,13 +152,13 @@ def delete_document(tenant: str, document_id: str) -> None:
     )
 
 
-def find_document_by_sha(tenant: str, sha256: str) -> dict[str, Any] | None:
+def find_document_by_sha(tenant: str, sha256: str, corpus_id: str | None = None) -> dict[str, Any] | None:
     c = client()
     if not c.collection_exists(settings.qdrant_collection):
         return None
     points, _ = c.scroll(
         collection_name=settings.qdrant_collection,
-        scroll_filter=filter_for(tenant, sha256=sha256),
+        scroll_filter=filter_for(tenant, sha256=sha256, corpora=[corpus_id] if corpus_id else None),
         limit=1,
         with_payload=True,
         with_vectors=False,

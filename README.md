@@ -122,17 +122,30 @@ sudo docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 
 ### 5. Iniciar o Harness com suporte a GPU
 
-Inicie o harness com a sobreposição de GPU ([docker-compose.gpu.yml](docker-compose.gpu.yml)):
+Para inicializar a stack com aceleração por hardware NVIDIA GPU no Docling Parser (detecção de layout, OCR e extração estrutural aceleradas via CUDA):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
-Verifique se o serviço de parser Docling detectou e inicializou o dispositivo CUDA:
+Para inicializar o ambiente apenas em modo CPU:
+
+```bash
+docker compose up -d
+```
+
+Verifique se o serviço de parser Docling detectou e inicializou o dispositivo CUDA através do readiness probe:
+
+```bash
+curl http://localhost:8000/ready
+# Retorna: {"status":"ready","checks":{"parser_cuda":true,"parser_device":"NVIDIA GeForce RTX ...",...}}
+```
+
+E consulte o `/health` direto do parser Docling:
 
 ```bash
 curl http://localhost:8001/health
-# Retorna: {"status":"ok","cuda_available":true,"cuda_device":"NVIDIA GeForce RTX ..."}
+# Retorna: {"status":"ok","cuda_available":true,"cuda_device":"NVIDIA GeForce RTX ...","cuda_device_count":1}
 ```
 
 ## Ingestão de arquivo
@@ -144,6 +157,16 @@ curl -X POST http://localhost:8000/v1/documents \
   -F 'corpus_id=tese' \
   -F 'metadata={"project":"alpha"}' \
   -F 'processing_options={"chunking":{"type":"hybrid","max_tokens":120}}'
+```
+
+### Verificação prévia de duplicata (`GET /v1/documents/check`)
+
+Antes de enviar arquivos volumosos pela rede, é possível consultar instantaneamente se o documento já está indexado por SHA-256 ou fingerprint:
+
+```bash
+curl -X GET "http://localhost:8000/v1/documents/check?sha256=<HASH_64_CHARS>&corpus_id=tese" \
+  -H 'X-Tenant-ID: lab'
+# Retorna: {"exists":true,"document_id":"...","filename":"...","corpus_id":"tese","chunker_type":"hybrid"}
 ```
 
 ## Ingestão direta de texto
@@ -166,58 +189,64 @@ curl -X POST http://localhost:8000/v1/documents/text \
 Para processar diretórios inteiros contendo dezenas ou centenas de documentos (`.pdf`, `.docx`, `.txt`, `.md`), utilize o script CLI [`scripts/ingest_folder.py`](scripts/ingest_folder.py).
 
 ### Principais recursos:
-- **Detecção e Rejeição Automática de Duplicatas**: Calcula o hash SHA-256 localmente antes de enviar e consulta o endpoint `/v1/documents/check-duplicate`. Arquivos que já foram indexados são ignorados instantaneamente em milissegundos sem reenviar bytes nem reprocessar modelos neurais no Docling.
+- **Verificação Prévia Instantânea (Pre-check)**: Calcula o hash SHA-256 localmente em milissegundos e consulta `/v1/documents/check`. Arquivos já ingeridos são ignorados imediatamente sem tráfego de rede desnecessário, sem escrita temporária em disco e sem filas no Celery.
+- **Detecção de GPU em Tempo Real**: Consulta a API e exibe no cabeçalho se a aceleração CUDA está ativa no Docling Parser.
+- **Suporte a Múltiplos Corpora**: Parâmetro `--corpus` / `--corpus-id` para direcionar a ingestão para um namespace lógico específico (ex: `seguranca`, `tese`).
 - **Controle de Concorrência**: Envia arquivos e acompanha as tarefas Celery em paralelo via `--concurrency N`.
 - **Estratégias de Chunking**: Permite selecionar `--chunker hybrid`, `hierarchical` ou `line_based` e definir `--max-tokens`.
 - **OCR sob Demanda**: Flag `--ocr` opcional para documentos digitalizados ou imagens.
+- **Forçar Reingestão**: Flag `--force` para reindexar documentos mesmo que já existam.
 
 ### Exemplos práticos:
 
 ```bash
-# 1. Ingestão padrão híbrida (com detecção de duplicatas e monitoramento em tempo real)
+# 1. Ingestão padrão híbrida com aceleração GPU e pre-check de duplicatas
 python3 scripts/ingest_folder.py \
   --dir /opt/pdf-ingestao \
   --tenant mestrado-cybersec \
-  --corpus-id massivos \
+  --corpus seguranca \
   --chunker hybrid \
   --max-tokens 120 \
   --concurrency 2
 
 # 2. Ingestão com OCR ativado e chunker hierárquico
 python3 scripts/ingest_folder.py \
-  --dir /caminho/para/documentos \
+  --dir /opt/pdf-ingestao \
   --tenant mestrado-cybersec \
   --chunker hierarchical \
   --ocr \
-  --concurrency 4
+  --concurrency 2
 
-# 3. Teste rápido limitando aos primeiros 5 arquivos
+# 3. Teste rápido com apenas 1 documento (para validar o pipeline e GPU)
 python3 scripts/ingest_folder.py \
   --dir /opt/pdf-ingestao \
   --tenant mestrado-cybersec \
-  --limit 5
+  --limit 1
+
+# 4. Teste em lote com concorrência direta
+python3 scripts/ingest_folder.py \
+  --dir /opt/pdf-ingestao \
+  --tenant mestrado-cybersec \
+  --concurrency 2
 ```
 
 **Exemplo de saída no terminal:**
 ```text
-============================================================
-Iniciando ingestão: /opt/pdf-ingestao -> http://localhost:8000
-Tenant: mestrado-cybersec | Chunker: hybrid (max_tokens=120) | OCR: False
-Total de arquivos encontrados: 76
-============================================================
-[1/76] An_Efficient_SQL_Injection_Detection_System... -> [JÁ INGERIDO (IGNORADO)] (0.18s)
-[2/76] DeepSyslog_Deep_Anomaly_Detection_on_Syslog... -> Enfileirado (job: 8f3c1d2e...)
-  -> [2/76] Job 8f3c1d2e...: PROGRESS (parsing: 10%)
-  -> [2/76] Job 8f3c1d2e...: PROGRESS (embedding: 40%)
-  -> [2/76] Job 8f3c1d2e...: INDEXADO com sucesso! Chunks: 84 (14.2s)
+===========================================================================
+📁 Diretório:    /opt/pdf-ingestao (76 arquivos)
+🏢 Tenant:       mestrado-cybersec | Corpus: default
+⚙️  Chunker:      hybrid (max_tokens: 120) | OCR: False
+🔄 Concorrência: 2 | Forçar Reingestão: False
+🚀 Aceleração:   CUDA ATIVO (NVIDIA GeForce RTX 5060 Laptop GPU)
+===========================================================================
+[1/76] ⏭️  JÁ INGERIDO (IGNORADO): 24-1-MDM-apresentacoes.pdf [pre-check instantâneo] (ID existente: 99580fbd...)
+[2/76] ⏭️  JÁ INGERIDO (IGNORADO): A Survey on Data Selection... [pre-check instantâneo] (ID existente: 8b9d66b7...)
+[3/76] ✅ NOVO INGERIDO: Detection of SQL injection.pdf -> 149 chunks [GPU: NVIDIA GeForce RTX 5060 Laptop GPU] em 6.4s (ID: 4f82b6fc...)
 ...
-============================================================
-RESUMO DA INGESTÃO:
-  Total processado: 76
-  Sucesso / Novos: 42
-  Ignorados (já ingeridos): 34
-  Falhas: 0
-============================================================
+===========================================================================
+🏁 Concluído em 45.2s
+📊 Resumo: Novos Ingeridos: 12 | Já Ingeridos (Ignorados): 64 | Falhas: 0 | Novos Chunks: 1840
+===========================================================================
 ```
 
 ## Busca multi-corpus

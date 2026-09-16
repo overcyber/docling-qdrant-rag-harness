@@ -17,6 +17,7 @@ from .config import settings
 from .qdrant_store import (
     delete_document,
     find_document_by_fingerprint,
+    find_document_by_sha,
     list_document_chunks,
 )
 from .schemas import ProcessingOptions, TextIngestRequest
@@ -223,6 +224,10 @@ def queue_document(
     try:
         if deduplicate:
             existing = find_document_by_fingerprint(tenant, fingerprint)
+            if not existing and corpus_id:
+                existing = find_document_by_sha(tenant, sha256, corpus_id=corpus_id)
+            if not existing:
+                existing = find_document_by_sha(tenant, sha256)
             if existing:
                 Path(path).unlink(missing_ok=True)
                 payload = existing["payload"]
@@ -235,7 +240,7 @@ def queue_document(
                     "bytes": size,
                     "status": "duplicate",
                     "duplicate_of": payload.get("document_id"),
-                    "ingest_fingerprint": fingerprint,
+                    "ingest_fingerprint": payload.get("ingest_fingerprint", fingerprint),
                 }
 
             reservation_key = ingest_reservation_key(tenant, fingerprint)
@@ -457,6 +462,50 @@ def job_status(job_id: str, tenant: str = Depends(tenant_id)):
     elif result.info:
         body["progress"] = result.info
     return body
+
+
+@router.get(
+    "/documents/check",
+    summary="Check if a document is already indexed by sha256 or fingerprint",
+)
+def check_document(
+    sha256: str | None = Query(default=None, description="SHA-256 hash of the document content"),
+    ingest_fingerprint: str | None = Query(default=None, description="Ingest fingerprint"),
+    corpus_id: str | None = Query(default=None, description="Logical corpus ID"),
+    tenant: str = Depends(tenant_id),
+):
+    if not sha256 and not ingest_fingerprint:
+        raise HTTPException(400, "Must provide either 'sha256' or 'ingest_fingerprint'")
+    if sha256 and not re.fullmatch(r"[A-Fa-f0-9]{64}", sha256):
+        raise HTTPException(400, "sha256 must be a 64-character hex string")
+    if ingest_fingerprint and not re.fullmatch(r"[A-Fa-f0-9]{64}", ingest_fingerprint):
+        raise HTTPException(400, "ingest_fingerprint must be a 64-character hex string")
+
+    existing = None
+    if ingest_fingerprint:
+        existing = find_document_by_fingerprint(tenant, ingest_fingerprint)
+    if not existing and sha256:
+        if corpus_id:
+            existing = find_document_by_sha(tenant, sha256, corpus_id=corpus_id)
+        if not existing:
+            existing = find_document_by_sha(tenant, sha256)
+
+    if existing:
+        payload = existing["payload"]
+        return {
+            "exists": True,
+            "document_id": payload.get("document_id"),
+            "filename": payload.get("filename"),
+            "sha256": payload.get("sha256"),
+            "corpus_id": payload.get("corpus_id"),
+            "ingest_fingerprint": payload.get("ingest_fingerprint"),
+            "chunker_type": payload.get("chunker_type"),
+        }
+    return {
+        "exists": False,
+        "sha256": sha256,
+        "corpus_id": corpus_id,
+    }
 
 
 @router.get("/documents/{document_id}", summary="Inspect indexed chunks for one document")

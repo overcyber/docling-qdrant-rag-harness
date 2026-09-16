@@ -73,17 +73,24 @@ def ingest_document(
     try:
         publish_event("document.started", {"job_id": self.request.id, "tenant_id": tenant_id, "document_id": document_id, "corpus_id": corpus_id})
         self.update_state(state="PROGRESS", meta={"stage": "parsing", "progress": 10})
-        with path.open("rb") as fh, httpx.Client(timeout=httpx.Timeout(float(settings.parser_timeout_seconds), connect=15.0)) as http:
-            resp = http.post(
-                f"{settings.parser_url}/parse",
-                files={"file": (filename, fh, "application/octet-stream")},
-                data={"options": json.dumps(processing_options, ensure_ascii=False)},
-            )
-            resp.raise_for_status()
-            parsed = resp.json()
+        try:
+            with path.open("rb") as fh, httpx.Client(timeout=httpx.Timeout(float(settings.parser_timeout_seconds), connect=15.0)) as http:
+                resp = http.post(
+                    f"{settings.parser_url}/parse",
+                    files={"file": (filename, fh, "application/octet-stream")},
+                    data={"options": json.dumps(processing_options, ensure_ascii=False)},
+                )
+                resp.raise_for_status()
+                parsed = resp.json()
+        except httpx.HTTPStatusError as err:
+            logger.error("Parser failed for '%s' (%s): %s", filename, document_id, err.response.text)
+            raise
         chunks = parsed.get("chunks") or []
         if not chunks:
             raise RuntimeError("Parser returned zero chunks")
+        accelerator = parsed.get("accelerator", "cpu")
+        accelerator_device = parsed.get("accelerator_device")
+        parse_duration = parsed.get("parse_duration_seconds")
         self.update_state(state="PROGRESS", meta={"stage": "embedding", "progress": 35, "chunks": len(chunks)})
         dense_all: list[list[float]] = []
         sparse_all: list[dict[str, list]] = []
@@ -127,6 +134,8 @@ def ingest_document(
                 "page_provenance": meta.get("page_provenance", "chunk"),
                 "docling_metadata": meta.get("docling", {}),
                 "parser_fallback": meta.get("fallback", False),
+                "accelerator": accelerator,
+                "accelerator_device": accelerator_device,
                 "embedding_models": embedding_identity or {"dense": settings.dense_model, "sparse": settings.sparse_model, "bm25_language": settings.bm25_language},
                 "chunker_type": parsed.get("chunker_type"),
                 "chunking_config": parsed.get("chunking_config", {}),
@@ -155,6 +164,9 @@ def ingest_document(
             "ingest_fingerprint": ingest_fingerprint,
             "chunks": total,
             "status": "indexed",
+            "accelerator": accelerator,
+            "accelerator_device": accelerator_device,
+            "parse_duration_seconds": parse_duration,
             "chunker_type": parsed.get("chunker_type"),
             "chunking_config": parsed.get("chunking_config", {}),
             "parser_warning": parsed.get("warning"),

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Detailed end-to-end integration test suite for Docling Qdrant RAG Harness."""
 
+import hashlib
 import json
 import time
 import unittest
@@ -304,6 +305,12 @@ class SystemDetailedE2ETests(unittest.TestCase):
         self.assertEqual(up2["status"], "duplicate")
         self.assertEqual(up2["duplicate_of"], up1["document_id"])
         self.assertIsNone(up2["job_id"])
+
+        # Verify GET /v1/documents/check endpoint recognizes existing document by sha256
+        sha = hashlib.sha256(content).hexdigest()
+        chk = make_req(f"/v1/documents/check?sha256={sha}", headers={"X-Tenant-ID": tenant})
+        self.assertTrue(chk.get("exists"))
+        self.assertEqual(chk.get("document_id"), up1["document_id"])
 
     def test_10_rag_chat_retrieval_mode(self):
         """Test RAG chat endpoint operating in retrieval-only mode and tracking conversation memory."""
