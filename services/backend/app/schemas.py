@@ -88,14 +88,34 @@ class TextIngestRequest(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=20000)
+    tenant: str | None = Field(default=None, max_length=128)
+    tenant_id: str | None = Field(default=None, max_length=128)
     mode: Literal["hybrid", "dense", "sparse"] | None = None
     top_k: int | None = Field(default=None, ge=1)
+    limit: int | None = Field(default=None, ge=1)
     candidate_k: int | None = Field(default=None, ge=1)
     score_threshold: float | None = None
     filters: dict[str, Any] = Field(default_factory=dict)
     corpora: list[str] = Field(default_factory=list, max_length=100)
+    corpus_id: str | None = Field(default=None, max_length=128)
     rerank: bool | None = None
     include_contextualized_text: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "limit" in data and ("top_k" not in data or data.get("top_k") is None):
+                data["top_k"] = data["limit"]
+            if "corpus_id" in data and data.get("corpus_id"):
+                c_id = str(data["corpus_id"]).strip()
+                corpora = list(data.get("corpora") or [])
+                if c_id and c_id not in corpora:
+                    corpora.append(c_id)
+                data["corpora"] = corpora
+            if "tenant" in data and ("tenant_id" not in data or data.get("tenant_id") is None):
+                data["tenant_id"] = data["tenant"]
+        return data
 
     @field_validator("corpora")
     @classmethod
@@ -130,12 +150,16 @@ class GenerationOptions(BaseModel):
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=20000)
     conversation_id: str | None = Field(default=None, max_length=256)
+    tenant: str | None = Field(default=None, max_length=128)
+    tenant_id: str | None = Field(default=None, max_length=128)
     mode: Literal["hybrid", "dense", "sparse"] | None = None
     top_k: int | None = Field(default=None, ge=1)
+    limit: int | None = Field(default=None, ge=1)
     candidate_k: int | None = Field(default=None, ge=1)
     score_threshold: float | None = None
     filters: dict[str, Any] = Field(default_factory=dict)
     corpora: list[str] = Field(default_factory=list, max_length=100)
+    corpus_id: str | None = Field(default=None, max_length=128)
     rerank: bool | None = None
     system_prompt: str | None = Field(default=None, max_length=30000)
     provider: LLMProviderName | None = None
@@ -143,6 +167,22 @@ class ChatRequest(BaseModel):
     generation: GenerationOptions = Field(default_factory=GenerationOptions)
     memory_enabled: bool | None = None
     history_messages: int | None = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "limit" in data and ("top_k" not in data or data.get("top_k") is None):
+                data["top_k"] = data["limit"]
+            if "corpus_id" in data and data.get("corpus_id"):
+                c_id = str(data["corpus_id"]).strip()
+                corpora = list(data.get("corpora") or [])
+                if c_id and c_id not in corpora:
+                    corpora.append(c_id)
+                data["corpora"] = corpora
+            if "tenant" in data and ("tenant_id" not in data or data.get("tenant_id") is None):
+                data["tenant_id"] = data["tenant"]
+        return data
 
     @field_validator("corpora")
     @classmethod

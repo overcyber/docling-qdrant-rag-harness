@@ -63,6 +63,27 @@ class SchemaTests(unittest.TestCase):
         finally:
             settings.api_key = orig_key
 
+    def test_search_and_chat_request_aliases(self):
+        search = SearchRequest.model_validate({
+            "query": "anomalies",
+            "tenant": "mestrado-cybersec",
+            "corpus_id": "seguranca",
+            "limit": 5,
+        })
+        self.assertEqual(search.tenant_id, "mestrado-cybersec")
+        self.assertEqual(search.top_k, 5)
+        self.assertEqual(search.corpora, ["seguranca"])
+
+        chat = ChatRequest.model_validate({
+            "question": "what is this?",
+            "tenant": "mestrado-cybersec",
+            "corpus_id": "seguranca",
+            "limit": 3,
+        })
+        self.assertEqual(chat.tenant_id, "mestrado-cybersec")
+        self.assertEqual(chat.top_k, 3)
+        self.assertEqual(chat.corpora, ["seguranca"])
+
 
 if __name__ == "__main__":
     unittest.main()

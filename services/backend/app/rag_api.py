@@ -9,7 +9,7 @@ import redis
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .auth import require_auth, tenant_id
+from .auth import _TENANT_RE, require_auth, tenant_id
 from .config import settings
 from .event_bus import publish_event
 from .llm_providers import chat as provider_chat
@@ -19,6 +19,16 @@ from .schemas import ChatRequest, GenerationOptions, SearchRequest
 
 router = APIRouter(prefix="/v1", tags=["rag"], dependencies=[Depends(require_auth)])
 rdb = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def resolve_request_tenant(req: SearchRequest | ChatRequest, header_tenant: str) -> str:
+    body_tenant = req.tenant_id or req.tenant
+    if body_tenant:
+        body_tenant = body_tenant.strip()
+        if not _TENANT_RE.fullmatch(body_tenant):
+            raise HTTPException(400, "Invalid tenant format in request body")
+        return body_tenant
+    return header_tenant
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a document-grounded RAG assistant. Answer only from the supplied evidence "
@@ -186,12 +196,12 @@ def search_impl(req: SearchRequest, tenant: str) -> dict[str, Any]:
 
 @router.post("/rag/search", summary="Retrieve relevant document chunks across one or more logical corpora")
 def search(req: SearchRequest, tenant: str = Depends(tenant_id)):
-    return search_impl(req, tenant)
+    return search_impl(req, resolve_request_tenant(req, tenant))
 
 
 @router.post("/search", include_in_schema=False)
 def search_compat(req: SearchRequest, tenant: str = Depends(tenant_id)):
-    return search_impl(req, tenant)
+    return search_impl(req, resolve_request_tenant(req, tenant))
 
 
 def context_impl(req: SearchRequest, tenant: str) -> dict[str, Any]:
@@ -202,12 +212,12 @@ def context_impl(req: SearchRequest, tenant: str) -> dict[str, Any]:
 
 @router.post("/rag/context", summary="Build an evidence block for an external agent/LLM")
 def context(req: SearchRequest, tenant: str = Depends(tenant_id)):
-    return context_impl(req, tenant)
+    return context_impl(req, resolve_request_tenant(req, tenant))
 
 
 @router.post("/context", include_in_schema=False)
 def context_compat(req: SearchRequest, tenant: str = Depends(tenant_id)):
-    return context_impl(req, tenant)
+    return context_impl(req, resolve_request_tenant(req, tenant))
 
 
 def prepare_chat(req: ChatRequest, tenant: str) -> dict[str, Any]:
@@ -355,13 +365,14 @@ def stream_chat_events(req: ChatRequest, tenant: str) -> Iterator[str]:
 
 @router.post("/rag/chat", summary="RAG chat using OpenAI-compatible, Ollama, llama.cpp or vLLM providers")
 def chat(req: ChatRequest, tenant: str = Depends(tenant_id)):
-    return chat_impl(req, tenant)
+    return chat_impl(req, resolve_request_tenant(req, tenant))
 
 
 @router.post("/rag/chat/stream", summary="Stream grounded RAG responses as Server-Sent Events")
 def chat_stream(req: ChatRequest, tenant: str = Depends(tenant_id)):
+    effective_tenant = resolve_request_tenant(req, tenant)
     return StreamingResponse(
-        stream_chat_events(req, tenant),
+        stream_chat_events(req, effective_tenant),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -369,9 +380,10 @@ def chat_stream(req: ChatRequest, tenant: str = Depends(tenant_id)):
 
 @router.post("/chat", include_in_schema=False)
 def chat_compat(req: ChatRequest, tenant: str = Depends(tenant_id)):
-    return chat_impl(req, tenant)
+    return chat_impl(req, resolve_request_tenant(req, tenant))
 
 
 @router.post("/chat/stream", include_in_schema=False)
 def chat_stream_compat(req: ChatRequest, tenant: str = Depends(tenant_id)):
-    return StreamingResponse(stream_chat_events(req, tenant), media_type="text/event-stream")
+    effective_tenant = resolve_request_tenant(req, tenant)
+    return StreamingResponse(stream_chat_events(req, effective_tenant), media_type="text/event-stream")

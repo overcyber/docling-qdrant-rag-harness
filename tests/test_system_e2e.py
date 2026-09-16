@@ -207,6 +207,21 @@ class SystemDetailedE2ETests(unittest.TestCase):
         self.assertIn("sources", context_res)
         self.assertIn("[S1]", context_res["context"])
 
+        # Also verify body aliases (tenant, limit) without X-Tenant-ID header
+        alias_res = make_req(
+            "/v1/rag/context",
+            method="POST",
+            data={
+                "query": "botnet command control signatures",
+                "tenant": tenant,
+                "limit": 2
+            }
+        )
+        self.assertIn("context", alias_res)
+        self.assertIn("sources", alias_res)
+        self.assertEqual(alias_res.get("tenant_id"), tenant)
+        self.assertIn("[S1]", alias_res["context"])
+
     def test_07_tenant_isolation(self):
         """Verify strict multi-tenant data isolation in Qdrant."""
         search_res = make_req(

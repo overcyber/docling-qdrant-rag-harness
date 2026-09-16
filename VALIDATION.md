@@ -82,3 +82,24 @@ All 6 microservices built and verified operational in Docker:
 - **Script**: [`scripts/ingest_folder.py`](scripts/ingest_folder.py) testado com 76 PDFs em `/opt/pdf-ingestao`.
 - **Deduplicação**: Arquivos já ingeridos detectados e ignorados em 0.18s por hash SHA-256 sem reprocessamento.
 
+### Suporte a Aliases no Corpo da Requisição (RAG Search / Context / Chat)
+- **Compatibilidade Ampliada**: Os endpoints `/v1/rag/search`, `/v1/rag/context` e `/v1/rag/chat` suportam parâmetros tanto via Headers HTTP (`X-Tenant-ID`) quanto diretamente no payload JSON:
+  - `tenant` ou `tenant_id` no corpo da requisição (com validação estrita de formato contra regex `_TENANT_RE`).
+  - `corpus_id` no corpo da requisição mapeado automaticamente para a lista `corpora`.
+  - `limit` no corpo da requisição mapeado para `top_k`.
+- **Validação com cURL**:
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/rag/context \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: test-api-key" \
+  -d '{
+    "query": "What are the main open issues in anomaly intrusion detection?",
+    "tenant": "mestrado-cybersec",
+    "corpus_id": "seguranca",
+    "limit": 2
+  }'
+```
+- **Resultado validado**: Recuperação com sucesso das fontes `[S1]` e `[S2]` e montagem do bloco de contexto contextualizado.
+- **Suíte de Testes**: 24 testes executados e aprovados via `scripts/validate.sh`.
+
+
