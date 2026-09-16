@@ -354,17 +354,18 @@ def ingest_text(req: TextIngestRequest, tenant: str = Depends(tenant_id)):
         raise HTTPException(status_code=400, detail="Invalid tenant")
     tenant_dir.mkdir(parents=True, exist_ok=True)
     requested = Path(req.filename or "").name
+    allowed_text_exts = {".txt", ".md", ".markdown"}
     if requested:
-        suffix = Path(requested).suffix.lower()
-        if suffix not in {".txt", ".md", ".markdown"}:
-            requested = f"{requested}.md"
-        filename = requested
+        requested_suffix = Path(requested).suffix.lower()
+        final_suffix = requested_suffix if requested_suffix in allowed_text_exts else ".md"
+        filename = requested if requested_suffix in allowed_text_exts else f"{requested}.md"
     else:
         safe_title = re.sub(r"[^A-Za-z0-9._-]+", "-", (req.title or "text-document")).strip("-._")[:120]
         filename = f"{safe_title or 'text-document'}.md"
-    path = (tenant_dir / f"{document_id}{Path(filename).suffix.lower()}").resolve()
+        final_suffix = ".md"
+    path = (tenant_dir / f"{document_id}{final_suffix}").resolve()
     try:
-        path.relative_to(upload_root)
+        path.relative_to(tenant_dir)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid output path")
     raw = req.text.encode("utf-8")
