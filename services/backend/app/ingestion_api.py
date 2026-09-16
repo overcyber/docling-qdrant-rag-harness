@@ -142,6 +142,8 @@ def ingest_fingerprint(sha256: str, corpus_id: str, user_metadata: dict[str, Any
 
 
 def resolve_tenant_dir(tenant: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tenant):
+        raise HTTPException(400, "Invalid tenant path")
     upload_root = Path(settings.upload_dir).resolve()
     tenant_dir = (upload_root / tenant).resolve()
     try:
