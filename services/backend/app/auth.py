@@ -18,8 +18,8 @@ def require_auth(
     if not settings.api_key:
         return
     expected_bearer = f"Bearer {settings.api_key}"
-    valid_bearer = bool(authorization and secrets.compare_digest(authorization, expected_bearer))
-    valid_key = bool(x_api_key and secrets.compare_digest(x_api_key, settings.api_key))
+    valid_bearer = bool(isinstance(authorization, str) and secrets.compare_digest(authorization, expected_bearer))
+    valid_key = bool(isinstance(x_api_key, str) and secrets.compare_digest(x_api_key, settings.api_key))
     if valid_bearer or valid_key:
         return
     raise HTTPException(status_code=401, detail="Invalid or missing API credential")
